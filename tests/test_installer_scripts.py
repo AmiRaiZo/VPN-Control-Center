@@ -22,6 +22,16 @@ def test_installer_recreates_an_existing_venv_when_python_is_out_of_range():
     assert 'rm -rf "${APP_DIR}/.venv"' in script
 
 
+def test_installer_reads_credentials_directly_from_tty_and_feeds_setup_via_stdin():
+    script = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert 'IFS= read -r -s -p "Bot token (input hidden): " bot_token </dev/tty' in script
+    assert 'IFS= read -r -p "Main admin Telegram numeric ID: " admin_ids </dev/tty' in script
+    assert "vpn_manager.setup_bot --stdin" in script
+    assert "</dev/tty" not in script.split("vpn_manager.setup_bot --stdin")[0].split("runuser")[-1]
+    assert "trap on_install_interrupt INT" in script
+    assert "unset bot_token admin_ids" in script
+
+
 def test_vpn_help_has_requested_maintenance_actions_and_safe_uninstall():
     script = (ROOT / "vpn-help.sh").read_text(encoding="utf-8")
     for label in (
@@ -48,4 +58,3 @@ def test_admin_cli_supports_subordinate_admin_creation():
     source = (ROOT / "src/vpn_manager/admin_cli.py").read_text(encoding="utf-8")
     assert '"admin", "finance", "support"' in source
     assert '"source": "vpn-help"' in source
-

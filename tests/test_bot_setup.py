@@ -7,9 +7,30 @@ import respx
 from cryptography.fernet import Fernet
 
 from vpn_manager.bot import configured_admin_ids
-from vpn_manager.setup_bot import normalize_admin_ids, save_bot_settings, verify_bot_token
+from vpn_manager.setup_bot import (
+    normalize_admin_ids,
+    read_stdin_credentials,
+    save_bot_settings,
+    verify_bot_token,
+)
 
 TOKEN = "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+
+
+def test_setup_reads_two_lines_from_stdin_without_transforming_credentials():
+    from io import StringIO
+
+    assert read_stdin_credentials(StringIO(f"{TOKEN}\n12345, 67890\n")) == (
+        TOKEN,
+        "12345, 67890",
+    )
+
+
+def test_setup_rejects_incomplete_stdin_credentials():
+    from io import StringIO
+
+    with pytest.raises(ValueError, match="admin Telegram ID"):
+        read_stdin_credentials(StringIO(f"{TOKEN}\n"))
 
 
 def test_admin_ids_are_numeric_positive_and_deduplicated():
@@ -59,4 +80,3 @@ def test_bot_settings_are_saved_without_overwriting_other_values(tmp_path: Path)
     assert saved.count("BOT_TOKEN=") == 1
     if os.name == "posix":
         assert env_file.stat().st_mode & 0o777 == 0o600
-

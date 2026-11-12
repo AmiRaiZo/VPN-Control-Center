@@ -1,16 +1,31 @@
 from __future__ import annotations
 
+import argparse
 import getpass
 import os
 import re
 import secrets
+import sys
 import tempfile
 from pathlib import Path
+from typing import TextIO
 
 import httpx
 from cryptography.fernet import Fernet
 
 TOKEN_PATTERN = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{20,}$")
+
+
+def read_stdin_credentials(stream: TextIO | None = None) -> tuple[str, str]:
+    """Read the two setup values from a pipe without echoing or logging the token."""
+    source = stream or sys.stdin
+    token_line = source.readline()
+    if not token_line:
+        raise ValueError("No bot token was received on the setup input stream.")
+    admin_line = source.readline()
+    if not admin_line:
+        raise ValueError("No main admin Telegram ID was received on the setup input stream.")
+    return token_line.rstrip("\r\n").strip(), admin_line.rstrip("\r\n").strip()
 
 
 def normalize_admin_ids(value: str) -> str:
@@ -99,16 +114,32 @@ def save_bot_settings(env_file: Path, token: str, admin_ids: str) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Configure Telegram bot credentials.")
+    parser.add_argument(
+        "--stdin",
+        action="store_true",
+        dest="stdin_credentials",
+        help="Read token and admin ID as two lines from stdin; intended for the installer.",
+    )
+    args = parser.parse_args()
     env_file = Path(os.environ.get("VPN_MANAGER_ENV_FILE", ".env"))
-    print("\nTelegram bot setup")
-    token = getpass.getpass("Bot token (input hidden): ").strip()
-    admin_ids = input("Main admin Telegram numeric ID: ").strip()
-    admin_ids = normalize_admin_ids(admin_ids)
-    username = verify_bot_token(token)
-    save_bot_settings(env_file, token, admin_ids)
-    print(f"Verified @{username}; credentials saved securely to {env_file}.")
+    try:
+        print("\nTelegram bot setup", flush=True)
+        if args.stdin_credentials:
+            token, admin_ids = read_stdin_credentials()
+        else:
+            token = getpass.getpass("Bot token (input hidden): ").strip()
+            admin_ids = input("Main admin Telegram numeric ID: ").strip()
+        admin_ids = normalize_admin_ids(admin_ids)
+        print("Verifying the token with Telegram Bot API (timeout: 15 seconds)...", flush=True)
+        username = verify_bot_token(token)
+        save_bot_settings(env_file, token, admin_ids)
+        print(f"Verified @{username}; credentials saved securely to {env_file}.", flush=True)
+    except KeyboardInterrupt:
+        raise SystemExit("Setup cancelled.") from None
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Telegram bot setup failed: {exc}") from exc
 
 
 if __name__ == "__main__":
     main()
-

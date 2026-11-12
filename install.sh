@@ -11,10 +11,19 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this installer as root: curl -fsSL https://raw.githubusercontent.com/${REPOSITORY}/${BRANCH}/install.sh | sudo bash" >&2
   exit 1
 fi
-if [[ ! -r /dev/tty ]]; then
+if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
   echo "An interactive terminal is required to enter the Telegram bot token and admin ID." >&2
   exit 1
 fi
+
+on_install_interrupt() {
+  unset bot_token admin_ids
+  echo >&2
+  echo "Installation interrupted; no Telegram credentials were saved by this step." >&2
+  exit 130
+}
+trap on_install_interrupt INT
+trap 'unset bot_token admin_ids; exit 143' TERM
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -82,8 +91,24 @@ runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/python" -m pip install --d
 
 echo
 echo "Enter the Telegram bot credentials. The token is not echoed or written to shell history."
-runuser -u "${SERVICE_USER}" -- env VPN_MANAGER_ENV_FILE="${APP_DIR}/.env" \
-  "${APP_DIR}/.venv/bin/python" -m vpn_manager.setup_bot </dev/tty
+IFS= read -r -s -p "Bot token (input hidden): " bot_token </dev/tty || {
+  echo >&2 "Could not read the Telegram bot token from the terminal."
+  exit 1
+}
+printf '\n' >/dev/tty
+IFS= read -r -p "Main admin Telegram numeric ID: " admin_ids </dev/tty || {
+  unset bot_token
+  echo >&2 "Could not read the main admin ID from the terminal."
+  exit 1
+}
+if ! printf '%s\n%s\n' "${bot_token}" "${admin_ids}" | \
+  runuser -u "${SERVICE_USER}" -- env VPN_MANAGER_ENV_FILE="${APP_DIR}/.env" \
+    "${APP_DIR}/.venv/bin/python" -m vpn_manager.setup_bot --stdin; then
+  unset bot_token admin_ids
+  echo >&2 "Telegram credential setup did not complete; the bot service was not enabled."
+  exit 1
+fi
+unset bot_token admin_ids
 
 runuser -u "${SERVICE_USER}" -- bash -c \
   "cd '${APP_DIR}' && '${APP_DIR}/.venv/bin/alembic' upgrade head"
@@ -121,4 +146,3 @@ echo
 echo "Telegram bot service is active. Check logs with: journalctl -u vpn-manager-bot -f"
 echo "Configuration file: ${APP_DIR}/.env (permissions: 0600)"
 echo "Maintenance menu: sudo vpn-help"
-

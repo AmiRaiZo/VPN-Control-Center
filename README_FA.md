@@ -58,7 +58,7 @@ LOG_LEVEL=INFO
 curl -fsSL https://raw.githubusercontent.com/AmiRaiZo/VPN-Control-Center/main/install.sh | sudo bash
 ```
 
-نصب‌کننده آخرین GitHub Release پایدار را با تگ نسخهٔ مشخص دانلود می‌کند، پیش‌نیازهای سیستمی (از جمله `jq` و `rsync`) و Python پیش‌فرض همان Ubuntu به‌همراه `venv` و `pip` را نصب می‌کند، سپس سازگاری نسخه را بررسی می‌کند. نسخه‌های Python از `3.12` تا پیش از `3.15` پشتیبانی می‌شوند؛ بنابراین روی Ubuntu 24.04 از Python 3.12 و روی Ubuntu 26.04/Resolute از Python پیش‌فرض همان سیستم استفاده می‌شود. کاربر سیستمی `vpnmanager` ساخته می‌شود، وابستگی‌ها و migration اجرا می‌شوند و سپس Token ربات به‌صورت مخفی دریافت می‌شود. Token با Telegram `getMe` اعتبارسنجی می‌شود و شناسهٔ عددی مالک اصلی پرسیده خواهد شد. فایل `.env` با مجوز `0600` ذخیره و سرویس `vpn-manager-bot` فعال می‌شود. فرمان `sudo vpn-help` منوی نگهداری سرور را باز می‌کند.
+نصب‌کننده آخرین GitHub Release پایدار را با تگ نسخهٔ مشخص دانلود می‌کند، پیش‌نیازهای سیستمی (از جمله `jq` و `rsync`) و Python پیش‌فرض همان Ubuntu به‌همراه `venv` و `pip` را نصب می‌کند، سپس سازگاری نسخه را بررسی می‌کند. نسخه‌های Python از `3.12` تا پیش از `3.15` پشتیبانی می‌شوند؛ بنابراین روی Ubuntu 24.04 از Python 3.12 و روی Ubuntu 26.04/Resolute از Python پیش‌فرض همان سیستم استفاده می‌شود. کاربر سیستمی `vpnmanager` ساخته می‌شود، وابستگی‌ها و migration اجرا می‌شوند و سپس خود نصب‌کننده دو prompt را مستقیماً از ترمینال نمایش می‌دهد: توکن مخفی و شناسهٔ عددی مالک اصلی. بعد از آن پیام بررسی ارتباط با Telegram Bot API نمایش داده می‌شود. توکن در shell history یا آرگومان پردازش نوشته نمی‌شود و فقط از pipe داخلی به ماژول راه‌اندازی تحویل داده می‌شود. با `Ctrl+C` نصب قابل توقف است. فایل `.env` با مجوز `0600` ذخیره و سرویس `vpn-manager-bot` فعال می‌شود. فرمان `sudo vpn-help` منوی نگهداری سرور را باز می‌کند.
 
 ```bash
 sudo systemctl status vpn-manager-bot
@@ -103,4 +103,3 @@ Adapter از Session Cookie پنل استفاده می‌کند، Base Path را
 تست‌های خودکار شامل مدل‌ها و migration، دفترکل، TOTP، setup ربات، کنترل API با mock و provisioning mock هستند. اتصال زنده Telegram و vpn-ui، تمام پروتکل‌ها، پرداخت واقعی، Ubuntu/systemd واقعی، concurrency چند مدیر، lifecycle زمان‌بندی‌شدهٔ انقضا و backup/restore واقعی هنوز تأیید نشده‌اند. سیستم پرداخت فعلی کارت‌به‌کارت و بررسی دستی است، نه درگاه پرداخت آنلاین.
 
 فهرست جزئی‌تر و معیار پذیرش در [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) نگهداری می‌شود.
-

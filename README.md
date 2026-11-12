@@ -1,4 +1,4 @@
-# VPN Control Center 1.1.2
+# VPN Control Center 1.1.3
 
 Telegram-based administration and sales control plane for one or more `vpn-ui` instances from [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui).
 
@@ -34,7 +34,7 @@ On Ubuntu 24.04 LTS, Ubuntu 26.04 (Resolute), and Ubuntu releases whose default 
 curl -fsSL https://raw.githubusercontent.com/AmiRaiZo/VPN-Control-Center/main/install.sh | sudo bash
 ```
 
-The installer downloads the latest stable GitHub Release (pinned by its `vX.Y.Z` tag), installs system prerequisites including `jq` and `rsync`, installs Ubuntu's default `python3`, `python3-venv`, and `python3-pip` packages, and verifies Python is `>=3.12,<3.15` before creating the virtual environment. This selects Python 3.12 on Ubuntu 24.04 and the distribution default (3.14) on Ubuntu 26.04/Resolute. It then creates the `vpnmanager` system user, installs the project, runs Alembic migrations, prompts for a hidden Telegram token, verifies it using Telegram `getMe`, requests the numeric owner Telegram ID, writes `.env` with mode `0600`, enables `vpn-manager-bot`, and installs the `vpn-help` maintenance command.
+The installer downloads the latest stable GitHub Release (pinned by its `vX.Y.Z` tag), installs system prerequisites including `jq` and `rsync`, installs Ubuntu's default `python3`, `python3-venv`, and `python3-pip` packages, and verifies Python is `>=3.12,<3.15` before creating the virtual environment. This selects Python 3.12 on Ubuntu 24.04 and the distribution default (3.14) on Ubuntu 26.04/Resolute. It then creates the `vpnmanager` system user, installs the project, and runs Alembic migrations. The installer itself displays the hidden token prompt and numeric owner-ID prompt directly on the terminal, then reports progress while verifying the token with Telegram `getMe`. The token is not written to shell history or process arguments; it is passed to the setup module only through a private stdin pipe. Ctrl+C interrupts the installation. Finally, `.env` is written with mode `0600`, `vpn-manager-bot` is enabled, and the `vpn-help` maintenance command is installed.
 
 ```bash
 sudo systemctl status vpn-manager-bot
@@ -59,4 +59,3 @@ The per-client `limitIp` value caps simultaneous source IPs; it is not a guarant
 ## Validation boundary
 
 Automated tests cover persistence/migrations, wallet ledger behavior, TOTP, installer configuration, mocked panel APIs and mocked provisioning. Live Telegram polling, live vpn-ui mutations, all protocol payloads, real payments, Ubuntu/systemd behavior, multi-admin race testing, scheduled subscription expiry/notifications and backup/restore drills remain unverified. The current payment provider is manual review only.
-
