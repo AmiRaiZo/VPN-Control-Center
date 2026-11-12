@@ -58,10 +58,15 @@ def verify_bot_token(token: str, *, client: httpx.Client | None = None) -> str:
     return str(result["username"])
 
 
-def save_bot_settings(env_file: Path, token: str, admin_ids: str) -> None:
-    if not TOKEN_PATTERN.fullmatch(token):
-        raise ValueError("Bot token format is invalid.")
-    normalized_ids = normalize_admin_ids(admin_ids)
+def save_bot_settings(env_file: Path, token: str | None, admin_ids: str | None) -> None:
+    """Atomically update either or both credentials while preserving omitted values."""
+    if token is None and admin_ids is None:
+        raise ValueError("At least one credential must be provided.")
+    if token is not None:
+        token = token.strip()
+        if not TOKEN_PATTERN.fullmatch(token):
+            raise ValueError("Bot token format is invalid.")
+    normalized_ids = normalize_admin_ids(admin_ids) if admin_ids is not None else None
     if not env_file.is_file():
         raise FileNotFoundError(f"Environment file does not exist: {env_file}")
 
@@ -72,19 +77,19 @@ def save_bot_settings(env_file: Path, token: str, admin_ids: str) -> None:
         if separator:
             existing_values[key] = value
     app_secret = existing_values.get("APP_SECRET_KEY", "")
-    if len(app_secret) < 32 or app_secret.startswith("replace-with-"):
+    if not app_secret.strip():
         app_secret = secrets.token_urlsafe(48)
     encryption_key = existing_values.get("PANEL_CREDENTIAL_ENCRYPTION_KEY", "")
-    try:
-        Fernet(encryption_key.encode("ascii"))
-    except (ValueError, UnicodeEncodeError):
+    if not encryption_key.strip():
         encryption_key = Fernet.generate_key().decode("ascii")
     replacements = {
-        "BOT_TOKEN": token,
-        "ADMIN_TELEGRAM_IDS": normalized_ids,
         "APP_SECRET_KEY": app_secret,
         "PANEL_CREDENTIAL_ENCRYPTION_KEY": encryption_key,
     }
+    if token is not None:
+        replacements["BOT_TOKEN"] = token
+    if normalized_ids is not None:
+        replacements["ADMIN_TELEGRAM_IDS"] = normalized_ids
     seen: set[str] = set()
     output: list[str] = []
     for line in lines:
@@ -115,16 +120,45 @@ def save_bot_settings(env_file: Path, token: str, admin_ids: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Configure Telegram bot credentials.")
-    parser.add_argument(
+    update_mode = parser.add_mutually_exclusive_group()
+    update_mode.add_argument(
         "--stdin",
         action="store_true",
         dest="stdin_credentials",
         help="Read token and admin ID as two lines from stdin; intended for the installer.",
     )
+    update_mode.add_argument(
+        "--set-admin-id",
+        action="store_true",
+        help="Read one admin ID from stdin and preserve the current bot token.",
+    )
+    update_mode.add_argument(
+        "--set-token",
+        action="store_true",
+        help="Read one token from stdin, verify it, and preserve the current admin ID.",
+    )
     args = parser.parse_args()
     env_file = Path(os.environ.get("VPN_MANAGER_ENV_FILE", ".env"))
     try:
         print("\nTelegram bot setup", flush=True)
+        if args.set_admin_id:
+            admin_line = sys.stdin.readline()
+            if not admin_line:
+                raise ValueError("No Super Admin ID was received on the setup input stream.")
+            admin_ids = admin_line.rstrip("\r\n").strip()
+            save_bot_settings(env_file, None, admin_ids)
+            print("Super Admin ID saved securely.", flush=True)
+            return
+        if args.set_token:
+            token_line = sys.stdin.readline()
+            if not token_line:
+                raise ValueError("No bot token was received on the setup input stream.")
+            token = token_line.rstrip("\r\n").strip()
+            print("Verifying the token with Telegram Bot API (timeout: 15 seconds)...", flush=True)
+            username = verify_bot_token(token)
+            save_bot_settings(env_file, token, None)
+            print(f"Verified @{username}; bot token saved securely.", flush=True)
+            return
         if args.stdin_credentials:
             token, admin_ids = read_stdin_credentials()
         else:

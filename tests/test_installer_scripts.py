@@ -47,17 +47,25 @@ def test_installer_refreshes_existing_partial_install_without_overwriting_state(
 def test_vpn_help_has_requested_maintenance_actions_and_safe_uninstall():
     script = (ROOT / "vpn-help.sh").read_text(encoding="utf-8")
     for label in (
-        "تغییر شناسه Super Admin",
-        "اضافه کردن ادمین زیرمجموعه",
-        "تغییر توکن ربات تلگرام",
-        "بررسی و نصب آخرین نسخه Release پنل",
-        "حذف کامل برنامه و اطلاعات",
+        "1) Change Super Admin Telegram ID",
+        "2) Add a subordinate administrator",
+        "3) Change Telegram bot token",
+        "4) Check and install the latest panel Release",
+        "5) Uninstall the application and all local data",
     ):
         assert label in script
     assert "releases/latest" in script
     assert '== "REMOVE"' in script
-    assert script.count('chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"') == 2
-    assert script.count('chmod 0600 "${ENV_FILE}"') == 2
+    assert "--set-admin-id" in script
+    assert "--set-token" in script
+    assert "The systemd service is not installed yet" in script
+    assert "No success was reported" in script
+    assert all(ord(character) < 128 for character in script)
+
+
+def test_all_ssh_shell_scripts_are_ascii_english():
+    for path in ROOT.glob("*.sh"):
+        assert path.read_text(encoding="utf-8").isascii(), f"Non-English text found in {path.name}"
 
 
 def test_admin_home_button_is_only_added_for_authorized_users():

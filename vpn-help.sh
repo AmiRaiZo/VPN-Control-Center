@@ -9,68 +9,97 @@ ENV_FILE="${APP_DIR}/.env"
 PYTHON="${APP_DIR}/.venv/bin/python"
 
 require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then echo "این فرمان را با sudo اجرا کنید." >&2; exit 1; fi
+  if [[ "${EUID}" -ne 0 ]]; then echo "Run this command with sudo." >&2; exit 1; fi
 }
 
-pause_menu() { echo; read -r -p "برای بازگشت Enter بزنید..." _; }
+pause_menu() { echo; read -r -p "Press Enter to return to the menu..." _ || true; }
+
+service_load_state() {
+  systemctl show -p LoadState --value "${SERVICE_NAME}" 2>/dev/null || true
+}
+
+secure_env_file() {
+  [[ -f "${ENV_FILE}" ]] || { echo "Configuration file not found: ${ENV_FILE}" >&2; return 1; }
+  chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}" || {
+    echo "Failed to set configuration file ownership." >&2
+    return 1
+  }
+  chmod 0600 "${ENV_FILE}" || {
+    echo "Failed to set configuration file permissions." >&2
+    return 1
+  }
+}
 
 restart_bot() {
-  systemctl restart "${SERVICE_NAME}"
-  systemctl is-active --quiet "${SERVICE_NAME}"
+  local load_state
+  load_state="$(service_load_state)"
+  if [[ "${load_state}" != "loaded" ]]; then
+    echo "The systemd service is not installed yet. Settings were saved, but the bot is not running." >&2
+    echo "Complete installation by running the official install command again." >&2
+    return 1
+  fi
+  if ! systemctl restart "${SERVICE_NAME}"; then
+    echo "The bot service could not be restarted. Check: journalctl -u ${SERVICE_NAME} -n 100 --no-pager" >&2
+    return 1
+  fi
+  if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
+    echo "The bot service is not active after restart. Check: journalctl -u ${SERVICE_NAME} -n 100 --no-pager" >&2
+    return 1
+  fi
 }
 
 change_owner() {
-  local current token new_id
+  local current new_id confirm
   current="$(sed -n 's/^ADMIN_TELEGRAM_IDS=//p' "${ENV_FILE}" | head -n1)"
-  token="$(sed -n 's/^BOT_TOKEN=//p' "${ENV_FILE}" | head -n1)"
-  echo "شناسه فعلی مالک: ${current}"
-  read -r -p "شناسه عددی جدید Super Admin: " new_id
-  if [[ ! "${new_id}" =~ ^[1-9][0-9]{4,19}$ ]]; then echo "شناسه معتبر نیست."; return 1; fi
-  read -r -p "برای تأیید، شناسه جدید را دوباره وارد کنید: " confirm
-  [[ "${confirm}" == "${new_id}" ]] || { echo "تأیید مطابقت نداشت."; return 1; }
-  printf '%s\n%s\n' "${token}" "${new_id}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -c \
-    'import os,sys; from pathlib import Path; from vpn_manager.setup_bot import save_bot_settings; token=sys.stdin.readline().rstrip("\n"); admin=sys.stdin.readline().strip(); save_bot_settings(Path(os.environ["VPN_MANAGER_ENV_FILE"]), token, admin)'
-  chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"
-  chmod 0600 "${ENV_FILE}"
-  restart_bot
-  echo "شناسه Super Admin تغییر کرد و سرویس فعال است."
+  echo "Current Super Admin ID: ${current:-NOT SET}"
+  read -r -p "New Super Admin Telegram numeric ID: " new_id || { echo "Input cancelled." >&2; return 1; }
+  if [[ ! "${new_id}" =~ ^[1-9][0-9]{4,19}$ ]]; then echo "Invalid Telegram ID." >&2; return 1; fi
+  read -r -p "Confirm the new ID: " confirm || { echo "Input cancelled." >&2; return 1; }
+  [[ "${confirm}" == "${new_id}" ]] || { echo "The confirmation did not match." >&2; return 1; }
+  if ! printf '%s\n' "${new_id}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -m vpn_manager.setup_bot --set-admin-id; then
+    echo "Failed to save the Super Admin ID. No success was reported." >&2
+    return 1
+  fi
+  secure_env_file || return 1
+  restart_bot || return 1
+  echo "Super Admin ID updated and the bot service is active."
 }
 
 change_token() {
-  local token admin_ids
-  admin_ids="$(sed -n 's/^ADMIN_TELEGRAM_IDS=//p' "${ENV_FILE}" | head -n1)"
-  read -r -s -p "توکن جدید ربات (ورودی مخفی): " token; echo
-  [[ -n "${token}" ]] || { echo "توکن خالی است."; return 1; }
-  printf '%s\n' "${token}" | "${PYTHON}" -c \
-    'import sys; from vpn_manager.setup_bot import verify_bot_token; token=sys.stdin.readline().rstrip("\n"); print("توکن معتبر است؛ ربات:", "@" + verify_bot_token(token))'
-  printf '%s\n%s\n' "${token}" "${admin_ids}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -c \
-    'import os,sys; from pathlib import Path; from vpn_manager.setup_bot import save_bot_settings; token=sys.stdin.readline().rstrip("\n"); admin=sys.stdin.readline().strip(); save_bot_settings(Path(os.environ["VPN_MANAGER_ENV_FILE"]), token, admin)'
-  chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"
-  chmod 0600 "${ENV_FILE}"
+  local token
+  read -r -s -p "New Telegram bot token (input hidden): " token || { echo "Input cancelled." >&2; return 1; }
+  echo
+  [[ -n "${token}" ]] || { echo "The bot token cannot be empty." >&2; return 1; }
+  if ! printf '%s\n' "${token}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -m vpn_manager.setup_bot --set-token; then
+    unset token
+    echo "Token verification or saving failed. The existing configuration was not changed." >&2
+    return 1
+  fi
   unset token
-  restart_bot
-  echo "توکن جدید اعتبارسنجی و ذخیره شد؛ سرویس فعال است."
+  secure_env_file || return 1
+  restart_bot || return 1
+  echo "Telegram bot token updated and the bot service is active."
 }
 
 update_panel() {
   local latest tag staging archive backup stamp rollback_dir current_tag newest
-  echo "در حال بررسی آخرین GitHub Release از ${REPOSITORY} ..."
+  echo "Checking the latest GitHub Release from ${REPOSITORY} ..."
   latest="$(curl --fail --location --silent --show-error \
     -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
     "https://api.github.com/repos/${REPOSITORY}/releases/latest")"
   tag="$(printf '%s' "${latest}" | jq -r '.tag_name // empty')"
   if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "آخرین Release تگ نسخه معتبر X.Y.Z ندارد؛ عملیات متوقف شد."; return 1
+    echo "The latest Release does not have a valid X.Y.Z version tag; update aborted."; return 1
   fi
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   current_tag="$(cat "${APP_DIR}/.release-tag" 2>/dev/null || true)"
   if [[ "${current_tag}" == "${tag}" ]]; then
-    echo "آخرین نسخه (${tag}) هم‌اکنون نصب است."; return 0
+    echo "The latest version (${tag}) is already installed."; return 0
   fi
   if [[ "${current_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     newest="$(printf '%s\n%s\n' "${current_tag#v}" "${tag#v}" | sort -V | tail -n1)"
     if [[ "${newest}" == "${current_tag#v}" ]]; then
-      echo "نسخه نصب‌شده (${current_tag}) از آخرین Release (${tag}) جدیدتر است؛ Downgrade انجام نمی‌شود."
+      echo "The installed version (${current_tag}) is newer than the latest Release (${tag}); downgrade was skipped."
       return 0
     fi
   fi
@@ -86,12 +115,17 @@ update_panel() {
     "https://github.com/${REPOSITORY}/archive/refs/tags/${tag}.tar.gz" -o "${archive}"
   tar -xzf "${archive}" --strip-components=1 -C "${staging}"
   [[ -f "${staging}/pyproject.toml" && -f "${staging}/alembic.ini" ]] || {
-    echo "محتوای Release ناقص است؛ نصب انجام نشد."; rm -rf "${staging}" "${archive}"; return 1;
+    echo "The Release archive is incomplete; no update was installed."; rm -rf "${staging}" "${archive}"; return 1;
   }
+  if [[ "$(service_load_state)" != "loaded" ]]; then
+    echo "The systemd service is not installed. Complete installation before using the update action." >&2
+    rm -rf "${staging}" "${archive}"
+    return 1
+  fi
   systemctl stop "${SERVICE_NAME}"
   rollback_dir="$(mktemp -d)"
   rollback_update() {
-    echo "به‌روزرسانی ناموفق بود؛ در حال بازگردانی سورس قبلی ..."
+    echo "The update failed; restoring the previous application source ..."
     tar -xzf "${backup}" -C "${rollback_dir}"
     rsync -a --delete --exclude='.env' --exclude='var/' --exclude='.venv/' \
       --exclude='backups/' "${rollback_dir}/" "${APP_DIR}/"
@@ -99,7 +133,7 @@ update_panel() {
     runuser -u "${SERVICE_USER}" -- "${PYTHON}" -m pip install --disable-pip-version-check --upgrade "${APP_DIR}" || true
     systemctl start "${SERVICE_NAME}" || true
     rm -rf "${staging}" "${archive}" "${rollback_dir}"
-    echo "سورس قبلی بازیابی شد. پشتیبان داده/سورس: ${backup}"
+    echo "The previous source was restored. Source/data backup: ${backup}"
   }
   if ! rsync -a --delete --exclude='.env' --exclude='var/' --exclude='.venv/' \
     --exclude='backups/' "${staging}/" "${APP_DIR}/"; then
@@ -117,55 +151,68 @@ update_panel() {
     rollback_update; return 1
   fi
   rm -rf "${staging}" "${archive}" "${rollback_dir}"
-  echo "به‌روزرسانی به ${tag} کامل شد. پشتیبان داده و سورس در ${APP_DIR}/backups قرار دارد."
+  echo "Update to ${tag} completed. Data and source backups are stored in ${APP_DIR}/backups."
 }
 
 uninstall_all() {
-  echo "هشدار: این کار سرویس، تنظیمات، دیتابیس، فایل‌ها و پشتیبان‌های داخل برنامه را حذف می‌کند."
-  read -r -p "برای حذف کامل دقیقاً REMOVE را وارد کنید: " confirm
-  [[ "${confirm}" == "REMOVE" ]] || { echo "لغو شد."; return 0; }
+  echo "WARNING: This removes the service, configuration, database, application files, and local backups."
+  read -r -p "Type REMOVE exactly to confirm full removal: " confirm || { echo "Input cancelled."; return 1; }
+  [[ "${confirm}" == "REMOVE" ]] || { echo "Removal cancelled."; return 0; }
   systemctl disable --now "${SERVICE_NAME}" 2>/dev/null || true
   rm -f "/etc/systemd/system/${SERVICE_NAME}.service" /usr/local/bin/vpn-help
   systemctl daemon-reload
   rm -rf "${APP_DIR}" /var/backups/vpn-control-center
   if id "${SERVICE_USER}" >/dev/null 2>&1; then userdel "${SERVICE_USER}" 2>/dev/null || true; fi
   getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" 2>/dev/null || true
-  echo "VPN Control Center و داده‌های محلی آن حذف شدند."
+  echo "VPN Control Center and its local data have been removed."
 }
 
 add_subordinate_admin() {
   local telegram_id role
-  read -r -p "Telegram numeric ID مدیر جدید: " telegram_id
-  [[ "${telegram_id}" =~ ^[1-9][0-9]{4,19}$ ]] || { echo "شناسه معتبر نیست."; return 1; }
-  echo "نقش را انتخاب کنید: 1) مدیر عملیات  2) مالی  3) پشتیبانی"
-  read -r -p "نقش: " role
+  read -r -p "New administrator Telegram numeric ID: " telegram_id || { echo "Input cancelled." >&2; return 1; }
+  [[ "${telegram_id}" =~ ^[1-9][0-9]{4,19}$ ]] || { echo "Invalid Telegram ID." >&2; return 1; }
+  echo "Select a role: 1) Operations admin  2) Finance  3) Support"
+  read -r -p "Role: " role || { echo "Input cancelled." >&2; return 1; }
   case "${role}" in
     1) role="admin" ;;
     2) role="finance" ;;
     3) role="support" ;;
-    *) echo "نقش نامعتبر است."; return 1 ;;
+    *) echo "Invalid role." >&2; return 1 ;;
   esac
-  runuser -u "${SERVICE_USER}" -- bash -c \
-    "cd '${APP_DIR}' && '${PYTHON}' -m vpn_manager.admin_cli add-admin --telegram-id '${telegram_id}' --role '${role}'"
-  echo "مدیر اضافه شد. جزئیات و مجوزهای اختصاصی را از ربات → پنل ادمین → مدیران ربات کنترل کنید."
+  if ! runuser -u "${SERVICE_USER}" -- bash -c \
+    "cd '${APP_DIR}' && '${PYTHON}' -m vpn_manager.admin_cli add-admin --telegram-id '${telegram_id}' --role '${role}'"; then
+    echo "Failed to add the administrator. Check the bot configuration and database." >&2
+    return 1
+  fi
+  echo "Administrator added. Manage detailed permissions in Telegram: Admin Panel > Bot Administrators."
 }
 
 main() {
   require_root
-  [[ -x "${PYTHON}" && -f "${ENV_FILE}" ]] || { echo "نصب معتبر در ${APP_DIR} پیدا نشد."; exit 1; }
+  [[ -x "${PYTHON}" && -f "${ENV_FILE}" ]] || { echo "A valid installation was not found in ${APP_DIR}." >&2; exit 1; }
   while true; do
     clear || true
     echo "====================================="
     echo "       VPN Control Center Help"
     echo "====================================="
-    echo "1) تغییر شناسه Super Admin"
-    echo "2) اضافه کردن ادمین زیرمجموعه"
-    echo "3) تغییر توکن ربات تلگرام"
-    echo "4) بررسی و نصب آخرین نسخه Release پنل"
-    echo "5) حذف کامل برنامه و اطلاعات"
-    echo "0) خروج"
+    if [[ "$(service_load_state)" == "loaded" ]]; then
+      if systemctl is-active --quiet "${SERVICE_NAME}"; then
+        echo "Bot service status: ACTIVE"
+      else
+        echo "Bot service status: INSTALLED, NOT ACTIVE"
+      fi
+    else
+      echo "Bot service status: NOT INSTALLED (installation is incomplete)"
+    fi
     echo
-    read -r -p "انتخاب شما: " choice
+    echo "1) Change Super Admin Telegram ID"
+    echo "2) Add a subordinate administrator"
+    echo "3) Change Telegram bot token"
+    echo "4) Check and install the latest panel Release"
+    echo "5) Uninstall the application and all local data"
+    echo "0) Exit"
+    echo
+    read -r -p "Select an option: " choice || break
     case "${choice}" in
       1) change_owner || true; pause_menu ;;
       2) add_subordinate_admin || true; pause_menu ;;
@@ -173,10 +220,9 @@ main() {
       4) update_panel || true; pause_menu ;;
       5) uninstall_all; break ;;
       0) break ;;
-      *) echo "گزینه نامعتبر است."; pause_menu ;;
+      *) echo "Invalid option."; pause_menu ;;
     esac
   done
 }
 
 main "$@"
-

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.5
+
+- Fix independent Super Admin ID and bot-token updates so either credential can be saved while the other is still empty.
+- Verify a replacement token before saving it, preserve the omitted credential, and stop reporting success when validation, persistence, or service restart fails.
+- Detect a missing systemd unit and explain that credentials may be saved but the bot is not running until installation is completed.
+- Preserve existing application and panel-encryption keys during credential changes; generate them only when the environment file has no value yet.
+- Translate the entire SSH maintenance menu and all of its messages to English.
+
 ## 1.1.4
 
 - Refresh source files from the pinned latest Release on every installer run, including recovery after an interrupted/partial installation.
