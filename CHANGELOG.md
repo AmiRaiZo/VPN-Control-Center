@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.7
+
+- Remove any previously configured Telegram webhook before starting long polling, preserving pending updates so `/start` and other messages can be received.
+- Log the authenticated bot identity at startup to make Telegram connection failures easier to diagnose.
+
 ## 1.1.6
 
 - Make the Telegram bot token visible while entering or pasting it during initial installation and from the SSH maintenance menu.

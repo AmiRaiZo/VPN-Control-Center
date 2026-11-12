@@ -3978,6 +3978,17 @@ async def bootstrap_admins() -> None:
         await session.commit()
 
 
+async def prepare_long_polling(bot: Bot) -> None:
+    """Remove an old Telegram webhook before this process starts long polling."""
+    webhook = await bot.get_webhook_info()
+    if webhook.url:
+        logger.warning(
+            "A Telegram webhook is configured; removing it because this service uses long polling."
+        )
+        await bot.delete_webhook(drop_pending_updates=False)
+        logger.info("Telegram webhook removed; pending updates were preserved.")
+
+
 async def run_bot() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
@@ -3985,6 +3996,8 @@ async def run_bot() -> None:
     _root_admins()  # Fail fast if the allowlist is missing or malformed.
     await bootstrap_admins()
     bot = Bot(token=token)
+    await prepare_long_polling(bot)
+    identity = await bot.get_me()
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
     await bot.set_my_commands(
@@ -3994,7 +4007,12 @@ async def run_bot() -> None:
             BotCommand(command="cancel", description="لغو عملیات جاری"),
         ]
     )
-    logger.info("VPN Control Center bot started; configured owner count=%d", len(_root_admins()))
+    logger.info(
+        "VPN Control Center bot authenticated as @%s (id=%d); configured owner count=%d",
+        identity.username,
+        identity.id,
+        len(_root_admins()),
+    )
     lifecycle_task = asyncio.create_task(
         _subscription_lifecycle_worker(bot), name="subscription-lifecycle"
     )
@@ -4016,4 +4034,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
