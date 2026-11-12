@@ -32,6 +32,18 @@ def test_installer_reads_credentials_directly_from_tty_and_feeds_setup_via_stdin
     assert "unset bot_token admin_ids" in script
 
 
+def test_installer_refreshes_existing_partial_install_without_overwriting_state():
+    script = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert 'if [[ ! -f "${APP_DIR}/pyproject.toml" ]]' not in script
+    assert "archive/refs/tags/${release_tag}.tar.gz" in script
+    assert (
+        "rsync -a --exclude='.env' --exclude='var/' --exclude='.venv/' --exclude='backups/'"
+        in script
+    )
+    assert '"${staging}/" "${APP_DIR}/"' in script
+    assert '"${release_tag}" > "${APP_DIR}/.release-tag"' in script
+
+
 def test_vpn_help_has_requested_maintenance_actions_and_safe_uninstall():
     script = (ROOT / "vpn-help.sh").read_text(encoding="utf-8")
     for label in (

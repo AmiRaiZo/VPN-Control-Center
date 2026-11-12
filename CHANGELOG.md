@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+- Refresh source files from the pinned latest Release on every installer run, including recovery after an interrupted/partial installation.
+- Preserve `.env`, persistent `var/` data, `.venv/`, and `backups/` while refreshing application source.
+
 ## 1.1.3
 
 - Fix the installer Telegram setup prompt for `curl | sudo bash`: Bash now reads the hidden token and visible admin-ID prompt directly from `/dev/tty`, then passes both values over a private stdin pipe to the setup module.

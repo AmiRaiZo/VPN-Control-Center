@@ -43,28 +43,30 @@ fi
 echo "Using Python $("${PYTHON_BIN}" --version 2>&1) (${PYTHON_BIN})."
 
 install -d -m 0755 "${APP_DIR}"
-if [[ ! -f "${APP_DIR}/pyproject.toml" ]]; then
-  archive="$(mktemp)"
-  trap 'rm -f "${archive}"' EXIT
-  release_json="$(curl --fail --location --silent --show-error \
-    -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/${REPOSITORY}/releases/latest")"
-  release_tag="$(printf '%s' "${release_json}" | jq -r '.tag_name // empty')"
-  if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "GitHub latest Release tag is missing or invalid; refusing an unpinned install." >&2
-    exit 1
-  fi
-  curl --fail --location --silent --show-error \
-    "https://github.com/${REPOSITORY}/archive/refs/tags/${release_tag}.tar.gz" \
-    --output "${archive}"
-  tar -xzf "${archive}" --strip-components=1 -C "${APP_DIR}"
-  printf '%s\n' "${release_tag}" > "${APP_DIR}/.release-tag"
+archive="$(mktemp)"
+staging="$(mktemp -d)"
+trap 'rm -f "${archive}"; rm -rf "${staging}"' EXIT
+release_json="$(curl --fail --location --silent --show-error \
+  -H 'Accept: application/vnd.github+json' \
+  "https://api.github.com/repos/${REPOSITORY}/releases/latest")"
+release_tag="$(printf '%s' "${release_json}" | jq -r '.tag_name // empty')"
+if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "GitHub latest Release tag is missing or invalid; refusing an unpinned install." >&2
+  exit 1
 fi
-
-if [[ ! -f "${APP_DIR}/pyproject.toml" || ! -f "${APP_DIR}/.env.example" ]]; then
+curl --fail --location --silent --show-error \
+  "https://github.com/${REPOSITORY}/archive/refs/tags/${release_tag}.tar.gz" \
+  --output "${archive}"
+tar -xzf "${archive}" --strip-components=1 -C "${staging}"
+if [[ ! -f "${staging}/pyproject.toml" || ! -f "${staging}/.env.example" ]]; then
   echo "The downloaded repository is incomplete; refusing to continue." >&2
   exit 1
 fi
+# Refresh source even after an interrupted prior install. Preserve local secrets,
+# persistent data, the existing venv, and backups while replacing release files.
+rsync -a --exclude='.env' --exclude='var/' --exclude='.venv/' --exclude='backups/' \
+  "${staging}/" "${APP_DIR}/"
+printf '%s\n' "${release_tag}" > "${APP_DIR}/.release-tag"
 
 if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   useradd --system --home "${APP_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"

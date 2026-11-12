@@ -1,4 +1,4 @@
-# VPN Control Center 1.1.3
+# VPN Control Center 1.1.4
 
 Telegram-based administration and sales control plane for one or more `vpn-ui` instances from [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui).
 
