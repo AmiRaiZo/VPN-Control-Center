@@ -67,7 +67,8 @@ change_owner() {
 
 change_token() {
   local token
-  read -r -s -p "New Telegram bot token (input hidden): " token || { echo "Input cancelled." >&2; return 1; }
+  printf '%s' "New Telegram bot token (visible input): "
+  read -r token || { echo "Input cancelled." >&2; return 1; }
   echo
   [[ -n "${token}" ]] || { echo "The bot token cannot be empty." >&2; return 1; }
   if ! printf '%s\n' "${token}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -m vpn_manager.setup_bot --set-token; then

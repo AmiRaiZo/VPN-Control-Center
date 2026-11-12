@@ -22,14 +22,17 @@ def test_installer_recreates_an_existing_venv_when_python_is_out_of_range():
     assert 'rm -rf "${APP_DIR}/.venv"' in script
 
 
-def test_installer_reads_credentials_directly_from_tty_and_feeds_setup_via_stdin():
+def test_installer_reads_visible_credentials_directly_from_tty_and_feeds_setup_via_stdin():
     script = (ROOT / "install.sh").read_text(encoding="utf-8")
-    assert 'IFS= read -r -s -p "Bot token (input hidden): " bot_token </dev/tty' in script
-    assert 'IFS= read -r -p "Main admin Telegram numeric ID: " admin_ids </dev/tty' in script
+    assert "printf '%s' \"Bot token (visible input): \" >/dev/tty" in script
+    assert "IFS= read -r bot_token </dev/tty" in script
+    assert "printf '%s' \"Main admin Telegram numeric ID: \" >/dev/tty" in script
+    assert "IFS= read -r admin_ids </dev/tty" in script
     assert "vpn_manager.setup_bot --stdin" in script
     assert "</dev/tty" not in script.split("vpn_manager.setup_bot --stdin")[0].split("runuser")[-1]
     assert "trap on_install_interrupt INT" in script
     assert "unset bot_token admin_ids" in script
+    assert "read -r -s" not in script
 
 
 def test_installer_refreshes_existing_partial_install_without_overwriting_state():
@@ -60,6 +63,8 @@ def test_vpn_help_has_requested_maintenance_actions_and_safe_uninstall():
     assert "--set-token" in script
     assert "The systemd service is not installed yet" in script
     assert "No success was reported" in script
+    assert "New Telegram bot token (visible input): " in script
+    assert "read -r -s" not in script
     assert all(ord(character) < 128 for character in script)
 
 

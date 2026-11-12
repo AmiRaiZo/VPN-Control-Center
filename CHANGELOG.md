@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.6
+
+- Make the Telegram bot token visible while entering or pasting it during initial installation and from the SSH maintenance menu.
+- Print installer prompts explicitly to `/dev/tty` and read the token and admin ID from that same terminal, avoiding ambiguous prompt/input routing under `curl | sudo bash`.
+
 ## 1.1.5
 
 - Fix independent Super Admin ID and bot-token updates so either credential can be saved while the other is still empty.

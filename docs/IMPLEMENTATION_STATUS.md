@@ -43,7 +43,7 @@ This ledger distinguishes local implementation from live integration evidence. A
 
 ## Latest local validation
 
-The installer, credential-update and SSH-menu changes are covered by **77 passing pytest tests**, Ruff check/format, compileall, `pip check`, `bash -n` and an ASCII-only scan of every root-level SSH shell script. Earlier migration validation (`upgrade head`, `alembic check`, `downgrade base`) passed against a disposable SQLite database; these changes do not alter the schema. Ubuntu `resolute` package metadata lists the distribution `python3` default as Python 3.14; no live Ubuntu installation has been run in this workspace.
+The installer, visible credential-input and SSH-menu changes are covered by **77 passing pytest tests**, Ruff check/format, compileall, `pip check`, `bash -n` and an ASCII-only scan of every root-level SSH shell script. Earlier migration validation (`upgrade head`, `alembic check`, `downgrade base`) passed against a disposable SQLite database; these changes do not alter the schema. Ubuntu `resolute` package metadata lists the distribution `python3` default as Python 3.14; no live Ubuntu installation has been run in this workspace.
 
 ## Release gate
 

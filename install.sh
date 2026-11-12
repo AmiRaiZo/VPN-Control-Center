@@ -92,13 +92,15 @@ runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/python" -m pip install --d
 runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/python" -m pip install --disable-pip-version-check "${APP_DIR}"
 
 echo
-echo "Enter the Telegram bot credentials. The token is not echoed or written to shell history."
-IFS= read -r -s -p "Bot token (input hidden): " bot_token </dev/tty || {
+echo "Enter the Telegram bot credentials. The bot token will be visible while you type or paste it."
+printf '%s' "Bot token (visible input): " >/dev/tty
+IFS= read -r bot_token </dev/tty || {
   echo >&2 "Could not read the Telegram bot token from the terminal."
   exit 1
 }
 printf '\n' >/dev/tty
-IFS= read -r -p "Main admin Telegram numeric ID: " admin_ids </dev/tty || {
+printf '%s' "Main admin Telegram numeric ID: " >/dev/tty
+IFS= read -r admin_ids </dev/tty || {
   unset bot_token
   echo >&2 "Could not read the main admin ID from the terminal."
   exit 1
