@@ -40,3 +40,4 @@ async def test_panels_keep_independent_cookie_jars_and_health_is_isolated():
         "two": {"reachable": False, "error": "PanelResponseError"},
     }
     await registry.close()
+

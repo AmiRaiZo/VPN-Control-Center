@@ -52,3 +52,4 @@ def test_decryption_does_not_hide_missing_key_configuration(monkeypatch):
 
     with pytest.raises(panel_credentials.PanelCredentialError, match="not configured"):
         panel_credentials.decrypt_panel_password("invalid-token")
+

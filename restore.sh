@@ -9,3 +9,4 @@ tar -xzf "${ARCHIVE}" -C "${APP_DIR}"
 chmod 0600 "${APP_DIR}/.env"
 systemctl start vpn-manager-api
 
+

@@ -50,6 +50,26 @@ class TimestampMixin:
     )
 
 
+class AdminUser(UUIDPrimaryKey, TimestampMixin, Base):
+    __tablename__ = "admin_users"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(24), default="admin", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    added_by: Mapped[int | None] = mapped_column(BigInteger)
+    extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class StoreSetting(Base):
+    __tablename__ = "store_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class Panel(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "panels"
 
@@ -100,6 +120,56 @@ class VPNService(UUIDPrimaryKey, TimestampMixin, Base):
 
     panel: Mapped[Panel] = relationship(back_populates="services")
     subscriptions: Mapped[list[Subscription]] = relationship(back_populates="service")
+    plans: Mapped[list[ProductPlan]] = relationship(back_populates="service")
+
+
+class ProductPlan(UUIDPrimaryKey, TimestampMixin, Base):
+    __tablename__ = "product_plans"
+    __table_args__ = (
+        CheckConstraint("duration_days > 0", name="ck_product_plans_duration_positive"),
+        CheckConstraint("traffic_limit_bytes >= 0", name="ck_product_plans_traffic_nonnegative"),
+        CheckConstraint("device_limit >= 0", name="ck_product_plans_devices_nonnegative"),
+        CheckConstraint("price >= 0", name="ck_product_plans_price_nonnegative"),
+        Index("ix_product_plans_active", "is_active"),
+    )
+
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vpn_services.id", ondelete="RESTRICT"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    duration_days: Mapped[int] = mapped_column(nullable=False)
+    traffic_limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    device_limit: Mapped[int] = mapped_column(default=1, nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="IRR", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    service: Mapped[VPNService] = relationship(back_populates="plans")
+
+
+class ManagedClient(UUIDPrimaryKey, TimestampMixin, Base):
+    __tablename__ = "managed_clients"
+    __table_args__ = (
+        UniqueConstraint(
+            "service_id", "external_identity", name="uq_managed_clients_service_identity"
+        ),
+        Index("ix_managed_clients_email", "email"),
+        Index("ix_managed_clients_present", "is_present"),
+    )
+
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vpn_services.id", ondelete="RESTRICT"), index=True
+    )
+    external_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_present: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    service: Mapped[VPNService] = relationship()
 
 
 class Subscription(UUIDPrimaryKey, TimestampMixin, Base):
@@ -117,6 +187,9 @@ class Subscription(UUIDPrimaryKey, TimestampMixin, Base):
     )
 
     customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"))
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_plans.id", ondelete="RESTRICT")
+    )
     service_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("vpn_services.id", ondelete="RESTRICT")
     )
@@ -129,6 +202,7 @@ class Subscription(UUIDPrimaryKey, TimestampMixin, Base):
 
     customer: Mapped[Customer] = relationship(back_populates="subscriptions")
     service: Mapped[VPNService] = relationship(back_populates="subscriptions")
+    plan: Mapped[ProductPlan | None] = relationship()
     traffic_snapshots: Mapped[list[TrafficSnapshot]] = relationship(back_populates="subscription")
 
 
@@ -181,9 +255,13 @@ class Order(UUIDPrimaryKey, TimestampMixin, Base):
     )
 
     customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"))
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_plans.id", ondelete="RESTRICT")
+    )
     subscription_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("subscriptions.id", ondelete="SET NULL")
     )
+    order_type: Mapped[str] = mapped_column(String(24), default="subscription", nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
@@ -192,6 +270,7 @@ class Order(UUIDPrimaryKey, TimestampMixin, Base):
 
     customer: Mapped[Customer] = relationship(back_populates="orders")
     payments: Mapped[list[Payment]] = relationship(back_populates="order")
+    plan: Mapped[ProductPlan | None] = relationship()
 
 
 class Payment(UUIDPrimaryKey, TimestampMixin, Base):
@@ -250,6 +329,7 @@ class AuditLog(UUIDPrimaryKey, Base):
     actor_customer_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL")
     )
+    actor_telegram_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     panel_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("panels.id", ondelete="SET NULL"))
     action: Mapped[str] = mapped_column(String(120), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -259,3 +339,4 @@ class AuditLog(UUIDPrimaryKey, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
+

@@ -30,13 +30,13 @@ IDENTITY_FIELDS = {
     "trojan": "password",
     "anytls": "password",
     "naive": "password",
-    "l2tp": "id",
-    "pptp": "id",
-    "openvpn": "id",
-    "openconnect": "id",
-    "sstp": "id",
-    "ikev2": "id",
-    "ssh": "username",
+    "l2tp": "password",
+    "pptp": "password",
+    "openvpn": "password",
+    "openconnect": "password",
+    "sstp": "password",
+    "ikev2": "password",
+    "ssh": "id",
     "shadowsocks": "email",
     "wg-c": "id",
     "awg": "id",
@@ -45,3 +45,4 @@ IDENTITY_FIELDS = {
     "hysteria": "auth",
 }
 TRAFFIC_UNIT_NOTE = "Client totalGB is bytes despite its name; expiryTime is Unix milliseconds."
+

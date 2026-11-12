@@ -8,3 +8,4 @@ tar --exclude='.venv' --exclude='__pycache__' -czf "${DEST}/vpn-manager-${STAMP}
 chmod 0600 "${DEST}/vpn-manager-${STAMP}.tar.gz"
 echo "Backup created: ${DEST}/vpn-manager-${STAMP}.tar.gz"
 
+

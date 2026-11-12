@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs
+
 import httpx
 import pytest
 import respx
@@ -147,3 +149,102 @@ async def test_client_identity_is_url_encoded_as_one_path_segment():
         ).mock(return_value=httpx.Response(200, json={"success": True}))
         await api.delete_client(3, "a/b c")
         assert route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_add_client_sends_repeated_membership_ids():
+    async with httpx.AsyncClient(cookies={"vpn-ui": "session"}) as http:
+        api = make_client(http)
+        api._authenticated = True
+        route = respx.post("https://panel.example/vpn/panel/api/inbounds/addClient").mock(
+            return_value=httpx.Response(200, json={"success": True, "obj": "ok"})
+        )
+        await api.add_client(
+            3,
+            {"email": "buyer@example.com", "enable": True},
+            inbound_ids=[3, 7, 7],
+        )
+        form = parse_qs(route.calls.last.request.content.decode())
+        assert form["inboundIds"] == ["3", "7"]
+        assert form["id"] == ["3"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_inbound_crud_and_traffic_by_identity_use_documented_routes():
+    async with httpx.AsyncClient(cookies={"vpn-ui": "session"}) as http:
+        api = make_client(http)
+        api._authenticated = True
+        add = respx.post("https://panel.example/vpn/panel/api/inbounds/add").mock(
+            return_value=httpx.Response(200, json={"success": True, "obj": {"id": 9}})
+        )
+        update = respx.post("https://panel.example/vpn/panel/api/inbounds/update/9").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        delete = respx.post("https://panel.example/vpn/panel/api/inbounds/del/9").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        traffic = respx.get(
+            "https://panel.example/vpn/panel/api/inbounds/getClientTrafficsById/identity%2Fwith%20space"
+        ).mock(return_value=httpx.Response(200, json={"success": True, "obj": {"up": 12}}))
+
+        await api.create_inbound(
+            remark="test", protocol="l2tp", port=1701, settings={"clients": []}
+        )
+        await api.update_inbound(9, remark="renamed", enable=False)
+        await api.delete_inbound(9)
+        result = await api.client_traffic_by_id("identity/with space")
+
+        assert add.called and update.called and delete.called and traffic.called
+        assert result == {"up": 12}
+        form = parse_qs(update.calls.last.request.content.decode())
+        assert form["enable"] == ["false"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_protocol_config_rendering_uses_documented_get_routes():
+    async with httpx.AsyncClient(cookies={"vpn-ui": "session"}) as http:
+        api = make_client(http)
+        api._authenticated = True
+        wg = respx.get(
+            "https://panel.example/vpn/panel/api/inbounds/7/wgc-configs",
+            params={"email": "buyer@example.com"},
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "obj": [{"deviceIndex": 0, "config": "[Interface]\\nPrivateKey=x"}],
+                },
+            )
+        )
+        ovpn = respx.get("https://panel.example/vpn/panel/api/inbounds/8/ovpn/tcp").mock(
+            return_value=httpx.Response(
+                200,
+                content=b"client\\nremote vpn.example 443",
+                headers={"content-type": "application/x-openvpn-profile"},
+            )
+        )
+
+        wg_files = await api.render_client_configs(7, "wg-c", "buyer@example.com")
+        ovpn_files = await api.render_client_configs(
+            8, "openvpn", "buyer@example.com", transport="tcp"
+        )
+
+        assert wg.called and wg_files[0]["filename"].endswith("device-0.conf")
+        assert wg_files[0]["content"].startswith(b"[Interface]")
+        assert ovpn.called and ovpn_files[0]["filename"].endswith(".ovpn")
+        assert ovpn_files[0]["content"].startswith(b"client")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_protocol_config_rendering_rejects_unknown_openvpn_transport():
+    async with httpx.AsyncClient(cookies={"vpn-ui": "session"}) as http:
+        api = make_client(http)
+        api._authenticated = True
+        with pytest.raises(ValueError, match="tcp or udp"):
+            await api.render_client_configs(8, "openvpn", "buyer", transport="sctp")
+

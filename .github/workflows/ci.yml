@@ -22,3 +22,4 @@ jobs:
           DATABASE_URL: sqlite+aiosqlite:///./ci.db
         run: alembic upgrade head && alembic check && alembic downgrade base
 
+

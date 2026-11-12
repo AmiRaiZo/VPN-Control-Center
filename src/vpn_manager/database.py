@@ -24,3 +24,4 @@ AsyncSessionFactory = async_sessionmaker(engine, class_=AsyncSession, expire_on_
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionFactory() as session:
         yield session
+

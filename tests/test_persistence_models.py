@@ -20,10 +20,14 @@ from vpn_manager.models import (
 
 def test_all_persistence_entities_are_registered():
     assert set(Base.metadata.tables) == {
+        "admin_users",
         "panels",
         "customers",
         "vpn_services",
+        "product_plans",
+        "managed_clients",
         "subscriptions",
+        "store_settings",
         "wallet_accounts",
         "wallet_ledger",
         "orders",
@@ -49,9 +53,18 @@ def test_money_columns_use_fixed_precision_decimal():
 
 def test_uuid_primary_keys_and_timezone_aware_timestamp_columns():
     for table in Base.metadata.tables.values():
-        assert table.c.id.primary_key
-        assert table.c.id.type.as_uuid
-    for model in (Panel, Customer, VPNService, Subscription, WalletAccount, Order, Payment):
+        if "id" in table.c:
+            assert table.c.id.primary_key
+            assert table.c.id.type.as_uuid
+    for model in (
+        Panel,
+        Customer,
+        VPNService,
+        Subscription,
+        WalletAccount,
+        Order,
+        Payment,
+    ):
         assert model.__table__.c.created_at.type.timezone is True
         assert model.__table__.c.updated_at.type.timezone is True
     assert utc_now().utcoffset().total_seconds() == 0
@@ -75,3 +88,4 @@ def test_business_constraints_and_indexes_are_declared():
 
 def test_panel_connection_diagnostics_fields_exist():
     assert {"status", "last_checked_at", "last_error", "version"} <= set(Panel.__table__.c.keys())
+

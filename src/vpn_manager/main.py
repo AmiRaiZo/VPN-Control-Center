@@ -12,3 +12,4 @@ app = FastAPI(
 @app.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
+

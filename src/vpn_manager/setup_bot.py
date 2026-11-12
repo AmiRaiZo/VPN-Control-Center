@@ -3,10 +3,12 @@ from __future__ import annotations
 import getpass
 import os
 import re
+import secrets
 import tempfile
 from pathlib import Path
 
 import httpx
+from cryptography.fernet import Fernet
 
 TOKEN_PATTERN = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{20,}$")
 
@@ -49,7 +51,25 @@ def save_bot_settings(env_file: Path, token: str, admin_ids: str) -> None:
         raise FileNotFoundError(f"Environment file does not exist: {env_file}")
 
     lines = env_file.read_text(encoding="utf-8").splitlines()
-    replacements = {"BOT_TOKEN": token, "ADMIN_TELEGRAM_IDS": normalized_ids}
+    existing_values: dict[str, str] = {}
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator:
+            existing_values[key] = value
+    app_secret = existing_values.get("APP_SECRET_KEY", "")
+    if len(app_secret) < 32 or app_secret.startswith("replace-with-"):
+        app_secret = secrets.token_urlsafe(48)
+    encryption_key = existing_values.get("PANEL_CREDENTIAL_ENCRYPTION_KEY", "")
+    try:
+        Fernet(encryption_key.encode("ascii"))
+    except (ValueError, UnicodeEncodeError):
+        encryption_key = Fernet.generate_key().decode("ascii")
+    replacements = {
+        "BOT_TOKEN": token,
+        "ADMIN_TELEGRAM_IDS": normalized_ids,
+        "APP_SECRET_KEY": app_secret,
+        "PANEL_CREDENTIAL_ENCRYPTION_KEY": encryption_key,
+    }
     seen: set[str] = set()
     output: list[str] = []
     for line in lines:
@@ -91,3 +111,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

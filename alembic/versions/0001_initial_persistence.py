@@ -216,3 +216,4 @@ def downgrade() -> None:
     op.drop_index("ix_customers_username", table_name="customers")
     op.drop_table("customers")
     op.drop_table("panels")
+

@@ -20,3 +20,4 @@ class PanelResponseError(PanelError):
 
 class PanelOperationError(PanelError):
     pass
+

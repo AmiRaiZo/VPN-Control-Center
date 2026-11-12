@@ -56,3 +56,4 @@ def test_panel_password_encryption_requires_key(monkeypatch):
             encrypt_panel_password("password")
     finally:
         get_settings.cache_clear()
+

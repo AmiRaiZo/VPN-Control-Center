@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from cryptography.fernet import Fernet
 
 from vpn_manager.bot import configured_admin_ids
 from vpn_manager.setup_bot import normalize_admin_ids, save_bot_settings, verify_bot_token
@@ -52,6 +53,10 @@ def test_bot_settings_are_saved_without_overwriting_other_values(tmp_path: Path)
     assert "APP_ENV=production" in saved
     assert f"BOT_TOKEN={TOKEN}" in saved
     assert "ADMIN_TELEGRAM_IDS=12345,67890" in saved
+    lines = dict(line.split("=", 1) for line in saved.splitlines() if "=" in line)
+    assert len(lines["APP_SECRET_KEY"]) >= 32
+    Fernet(lines["PANEL_CREDENTIAL_ENCRYPTION_KEY"].encode("ascii"))
     assert saved.count("BOT_TOKEN=") == 1
     if os.name == "posix":
         assert env_file.stat().st_mode & 0o777 == 0o600
+

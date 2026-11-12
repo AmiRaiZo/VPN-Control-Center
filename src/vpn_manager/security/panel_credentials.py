@@ -34,3 +34,4 @@ def decrypt_panel_password(token: str) -> str:
         return cipher.decrypt(token.encode("ascii")).decode("utf-8")
     except (InvalidToken, UnicodeError, ValueError) as exc:
         raise PanelCredentialError("Stored panel credential cannot be decrypted") from exc
+
