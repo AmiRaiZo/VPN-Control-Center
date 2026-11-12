@@ -1,4 +1,4 @@
-# VPN Control Center 1.1.1
+# VPN Control Center 1.1.2
 
 Telegram-based administration and sales control plane for one or more `vpn-ui` instances from [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui).
 
@@ -18,7 +18,7 @@ See [README_FA.md](README_FA.md) for the Persian setup and operator guide and [d
 ## Local setup
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 cp .env.example .env
@@ -28,13 +28,13 @@ Configure `APP_SECRET_KEY`, `DATABASE_URL`, `BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, a
 
 ## One-line Ubuntu installer
 
-On Ubuntu 24.04 LTS, from an interactive terminal:
+On Ubuntu 24.04 LTS, Ubuntu 26.04 (Resolute), and Ubuntu releases whose default Python is in the supported range, from an interactive terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AmiRaiZo/VPN-Control-Center/main/install.sh | sudo bash
 ```
 
-The installer downloads the latest stable GitHub Release (pinned by its `vX.Y.Z` tag), installs system prerequisites including `jq` and `rsync`, prepares Python 3.12 and a virtual environment, creates the `vpnmanager` system user, installs the project, runs Alembic migrations, prompts for a hidden Telegram token, verifies it using Telegram `getMe`, requests the numeric owner Telegram ID, writes `.env` with mode `0600`, enables `vpn-manager-bot`, and installs the `vpn-help` maintenance command.
+The installer downloads the latest stable GitHub Release (pinned by its `vX.Y.Z` tag), installs system prerequisites including `jq` and `rsync`, installs Ubuntu's default `python3`, `python3-venv`, and `python3-pip` packages, and verifies Python is `>=3.12,<3.15` before creating the virtual environment. This selects Python 3.12 on Ubuntu 24.04 and the distribution default (3.14) on Ubuntu 26.04/Resolute. It then creates the `vpnmanager` system user, installs the project, runs Alembic migrations, prompts for a hidden Telegram token, verifies it using Telegram `getMe`, requests the numeric owner Telegram ID, writes `.env` with mode `0600`, enables `vpn-manager-bot`, and installs the `vpn-help` maintenance command.
 
 ```bash
 sudo systemctl status vpn-manager-bot

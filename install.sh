@@ -5,7 +5,7 @@ REPOSITORY="${REPOSITORY:-AmiRaiZo/VPN-Control-Center}"
 BRANCH="${BRANCH:-main}"
 APP_DIR="${APP_DIR:-/opt/vpn-control-center}"
 SERVICE_USER="${SERVICE_USER:-vpnmanager}"
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this installer as root: curl -fsSL https://raw.githubusercontent.com/${REPOSITORY}/${BRANCH}/install.sh | sudo bash" >&2
@@ -18,12 +18,20 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl jq rsync tar gzip python3.12 python3.12-venv
+apt-get install -y ca-certificates curl jq rsync tar gzip python3 python3-venv python3-pip
 
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-  echo "${PYTHON_BIN} is required. Set PYTHON_BIN to a Python 3.12 executable." >&2
+  echo "${PYTHON_BIN} was not found after installing Ubuntu's Python runtime packages." >&2
   exit 1
 fi
+PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
+if ! "${PYTHON_BIN}" -c 'import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (3, 15) else 1)'; then
+  python_version="$("${PYTHON_BIN}" -c 'import platform; print(platform.python_version())')"
+  echo "Python ${python_version} is not supported. This release requires Python >=3.12 and <3.15." >&2
+  echo "Install a supported Python runtime or set PYTHON_BIN to its executable and rerun." >&2
+  exit 1
+fi
+echo "Using Python $("${PYTHON_BIN}" --version 2>&1) (${PYTHON_BIN})."
 
 install -d -m 0755 "${APP_DIR}"
 if [[ ! -f "${APP_DIR}/pyproject.toml" ]]; then
@@ -61,10 +69,16 @@ chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}"
 chmod 0755 "${APP_DIR}/vpn-help.sh"
 ln -sfn "${APP_DIR}/vpn-help.sh" /usr/local/bin/vpn-help
 
-if [[ ! -x "${APP_DIR}/.venv/bin/python" ]]; then
-runuser -u "${SERVICE_USER}" -- "${PYTHON_BIN}" -m venv "${APP_DIR}/.venv"
+if [[ -x "${APP_DIR}/.venv/bin/python" ]] && \
+  ! "${APP_DIR}/.venv/bin/python" -c 'import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (3, 15) else 1)'; then
+  echo "Existing virtual environment uses an unsupported Python version; recreating it."
+  rm -rf "${APP_DIR}/.venv"
 fi
-runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/pip" install --disable-pip-version-check "${APP_DIR}"
+if [[ ! -x "${APP_DIR}/.venv/bin/python" ]]; then
+  runuser -u "${SERVICE_USER}" -- "${PYTHON_BIN}" -m venv "${APP_DIR}/.venv"
+fi
+runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/python" -m pip install --disable-pip-version-check --upgrade pip
+runuser -u "${SERVICE_USER}" -- "${APP_DIR}/.venv/bin/python" -m pip install --disable-pip-version-check "${APP_DIR}"
 
 echo
 echo "Enter the Telegram bot credentials. The token is not echoed or written to shell history."

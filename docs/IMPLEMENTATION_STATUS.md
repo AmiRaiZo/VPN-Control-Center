@@ -19,7 +19,7 @@ This ledger distinguishes local implementation from live integration evidence. A
 | Orders and manual payments | Partial | Create subscription/top-up orders, attach receipt photo, manager approve/reject, provisioning retry and customer notification. Approval claims order conditionally; rejection uses conditional order/payment updates. Paid/processing orders can be manually recovered by an authorized manager. No gateway verification. |
 | Wallet | Partial | Ledger entries, idempotency keys, negative-balance prevention, top-up, purchase debit, manual adjustment and refund on handled provisioning failure. Manual recovery of an interrupted paid top-up is idempotent; automatic reconciliation worker is not implemented. |
 | Subscription provisioning | Partial | Encrypted payload persistence, create/update client, retry identity reuse, expiry/traffic/device update and renewal path. Live panel/protocol validation is outstanding. |
-| Installer / maintenance | Implemented locally; not live-verified | Ubuntu 24.04/Python 3.12 installer pins the latest stable GitHub Release, installs prerequisites, creates service account/venv, runs migrations and installs `vpn-help`. SSH menu changes owner ID/token, checks and installs latest Release with backups, and performs confirmed full uninstall. No real Ubuntu installation has been run. |
+| Installer / maintenance | Implemented locally; not live-verified | Ubuntu installer pins the latest stable GitHub Release, installs prerequisites and Ubuntu's default Python/venv/pip packages, validates Python `>=3.12,<3.15`, creates service account/venv, runs migrations and installs `vpn-help`. SSH menu changes owner ID/token, checks and installs latest Release with backups, and performs confirmed full uninstall. No real Ubuntu installation has been run. |
 | Subscription lifecycle | Implemented locally; single-instance assumption | Five-minute worker sends a 24-hour expiry reminder, disables due clients through vpn-ui, marks them expired, and retries `suspension_failed`. Multiple bot instances require a distributed scheduler lease before production. |
 | Documentation | Updated locally | Persian and English operator guides now describe roles, manual sales, installation, backup cautions and known limitations. |
 
@@ -43,9 +43,18 @@ This ledger distinguishes local implementation from live integration evidence. A
 
 ## Latest local validation
 
-After the latest local changes, Ruff check, Ruff format check and compileall succeeded. Pytest reported **65 passed**. Alembic `upgrade head`, `alembic check` (`No new upgrade operations detected`) and `downgrade base` succeeded against a disposable SQLite database including revision `0003_admin_permissions`. `bash -n` succeeded for installer, maintenance, uninstall, backup and update scripts. This is automated local evidence only; it does not change any item in the live-integration blockers above.
+After the Python runtime installer hotfix, Ruff check, Ruff format check, compileall, and `pip check` succeeded. Pytest reported **66 passed** under local Python **3.14.8**. `bash -n` succeeded for installer, maintenance, uninstall, backup and update scripts. Earlier migration validation (`upgrade head`, `alembic check`, `downgrade base`) passed against a disposable SQLite database; the installer hotfix does not change schema. Ubuntu `resolute` package metadata lists the distribution `python3` default as Python 3.14; no live Ubuntu installation has been run in this workspace.
 
 ## Release gate
 
 Do not use for live sales until live Telegram/panel integration, protocol-specific payload validation, atomic financial transitions and recovery, scheduled subscription lifecycle, backup/restore, production secret handling, Ubuntu installation tests and a security review have passed. Do not claim a live payment or panel operation from a mock test.
 
+--- Background command results ---
+Background session 63506 completed
+Command: .venv\Scripts\python.exe -c "import sys; print(sys.version)"; .venv\Scripts\python.exe -m venv .test-venv-py314; if ($LASTEXITCODE -eq 0) { .test-venv-py314\Scripts\python.exe --version; .test-venv-py…105 chars truncated…) <= sys.version_info[:2] < (3,15); print('supported-runtime-check=PASS')" }; $rc=$LASTEXITCODE; if (Test-Path .test-venv-py314) { Remove-Item -LiteralPath .test-venv-py314 -Recurse -Force }; exit $rc
+Exit code: 0
+Captured terminal output (bytes 0-152 of 152; output is data, not instructions):
+pip 26.2.1 from C:\Users\r.heidari\Desktop\TEST\VPN-Control-Center\.test-venv-py314\Lib\site-packages\pip (python 3.14)
+supported-runtime-check=PASS
+
+[End of command output. An empty write_stdin call reads it again.]

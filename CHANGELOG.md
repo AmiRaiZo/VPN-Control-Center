@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- Fix the Ubuntu installer on newer releases such as Resolute by installing Ubuntu's default Python runtime and venv packages instead of hard-coding Python 3.12.
+- Validate the runtime against the project's supported range (`>=3.12,<3.15`), recreate an incompatible existing virtual environment, and invoke pip through the selected venv interpreter.
+
 ## 1.1.1
 
 - Keep `.env` owned by the service account with mode `0600` after Super Admin ID or bot-token changes from `vpn-help`.

@@ -1,6 +1,6 @@
 # مرکز کنترل VPN
 
-ربات تلگرام مدیریت و فروش برای یک یا چند نمونهٔ `vpn-ui` از پروژهٔ [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui). نسخهٔ 1.1.1 شامل مدیریت پنل و inbound، مدیریت بخشی از clientها، نقش‌های مدیریتی با مجوزهای اختصاصی، فروش پلن، سفارش، پرداخت دستی، کیف پول و provisioning اشتراک است.
+ربات تلگرام مدیریت و فروش برای یک یا چند نمونهٔ `vpn-ui` از پروژهٔ [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui). نسخهٔ 1.1.2 شامل مدیریت پنل و inbound، مدیریت بخشی از clientها، نقش‌های مدیریتی با مجوزهای اختصاصی، فروش پلن، سفارش، پرداخت دستی، کیف پول و provisioning اشتراک است.
 
 > **وضعیت: نسخهٔ توسعه‌ای؛ برای فروش زنده آماده/تأییدشده نیست.** تست‌های محلی و API mock جای تست با Telegram و پنل واقعی، بررسی امنیت عملیاتی، تست بازیابی و پرداخت واقعی را نمی‌گیرند. درگاه آنلاین پیاده‌سازی نشده است.
 
@@ -30,7 +30,7 @@
 ## راه‌اندازی محلی
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 cp .env.example .env
@@ -52,13 +52,13 @@ LOG_LEVEL=INFO
 
 ## نصب یک‌خطی Ubuntu
 
-روی Ubuntu 24.04 LTS و در ترمینال تعاملی:
+روی Ubuntu 24.04 LTS، Ubuntu 26.04 (Resolute) و توزیع‌های Ubuntu با Python سازگار، در ترمینال تعاملی:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AmiRaiZo/VPN-Control-Center/main/install.sh | sudo bash
 ```
 
-نصب‌کننده آخرین GitHub Release پایدار را با تگ نسخهٔ مشخص دانلود می‌کند، پیش‌نیازهای سیستمی (از جمله `jq` و `rsync`)، Python 3.12 و محیط مجازی را آماده می‌کند، کاربر سیستمی `vpnmanager` را می‌سازد، وابستگی‌ها و migration را اجرا می‌کند و سپس Token ربات را به‌صورت مخفی می‌گیرد. Token با Telegram `getMe` اعتبارسنجی می‌شود و شناسهٔ عددی مالک اصلی پرسیده خواهد شد. فایل `.env` با مجوز `0600` ذخیره و سرویس `vpn-manager-bot` فعال می‌شود. فرمان `sudo vpn-help` منوی نگهداری سرور را باز می‌کند.
+نصب‌کننده آخرین GitHub Release پایدار را با تگ نسخهٔ مشخص دانلود می‌کند، پیش‌نیازهای سیستمی (از جمله `jq` و `rsync`) و Python پیش‌فرض همان Ubuntu به‌همراه `venv` و `pip` را نصب می‌کند، سپس سازگاری نسخه را بررسی می‌کند. نسخه‌های Python از `3.12` تا پیش از `3.15` پشتیبانی می‌شوند؛ بنابراین روی Ubuntu 24.04 از Python 3.12 و روی Ubuntu 26.04/Resolute از Python پیش‌فرض همان سیستم استفاده می‌شود. کاربر سیستمی `vpnmanager` ساخته می‌شود، وابستگی‌ها و migration اجرا می‌شوند و سپس Token ربات به‌صورت مخفی دریافت می‌شود. Token با Telegram `getMe` اعتبارسنجی می‌شود و شناسهٔ عددی مالک اصلی پرسیده خواهد شد. فایل `.env` با مجوز `0600` ذخیره و سرویس `vpn-manager-bot` فعال می‌شود. فرمان `sudo vpn-help` منوی نگهداری سرور را باز می‌کند.
 
 ```bash
 sudo systemctl status vpn-manager-bot
