@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+[project]
+name = "vpn-control-center"
+version = "0.1.0"
+description = "Multi-panel VPN operations control plane for vpn-ui"
+requires-python = ">=3.12,<3.15"
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "httpx>=0.28,<1", "pydantic-settings>=2.7,<3", "sqlalchemy[asyncio]>=2.0.38,<3", "asyncpg>=0.30,<1", "aiosqlite>=0.21,<1", "alembic>=1.14,<2", "redis>=5.2,<7", "aiogram>=3.18,<4", "cryptography>=44,<47", "python-multipart>=0.0.20,<1"]
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9", "pytest-asyncio>=0.25,<2", "respx>=0.22,<1", "ruff>=0.9,<1", "mypy>=1.14,<2"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/vpn_manager"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
