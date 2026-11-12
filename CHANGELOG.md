@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Keep `.env` owned by the service account with mode `0600` after Super Admin ID or bot-token changes from `vpn-help`.
+
 ## 1.1.0
 
 - Added the `sudo vpn-help` SSH maintenance menu for Super Admin ID changes, Telegram bot token rotation, latest-release updates and full uninstall.

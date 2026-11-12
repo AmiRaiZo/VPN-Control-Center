@@ -30,6 +30,8 @@ change_owner() {
   [[ "${confirm}" == "${new_id}" ]] || { echo "تأیید مطابقت نداشت."; return 1; }
   printf '%s\n%s\n' "${token}" "${new_id}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -c \
     'import os,sys; from pathlib import Path; from vpn_manager.setup_bot import save_bot_settings; token=sys.stdin.readline().rstrip("\n"); admin=sys.stdin.readline().strip(); save_bot_settings(Path(os.environ["VPN_MANAGER_ENV_FILE"]), token, admin)'
+  chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"
+  chmod 0600 "${ENV_FILE}"
   restart_bot
   echo "شناسه Super Admin تغییر کرد و سرویس فعال است."
 }
@@ -43,6 +45,8 @@ change_token() {
     'import sys; from vpn_manager.setup_bot import verify_bot_token; token=sys.stdin.readline().rstrip("\n"); print("توکن معتبر است؛ ربات:", "@" + verify_bot_token(token))'
   printf '%s\n%s\n' "${token}" "${admin_ids}" | VPN_MANAGER_ENV_FILE="${ENV_FILE}" "${PYTHON}" -c \
     'import os,sys; from pathlib import Path; from vpn_manager.setup_bot import save_bot_settings; token=sys.stdin.readline().rstrip("\n"); admin=sys.stdin.readline().strip(); save_bot_settings(Path(os.environ["VPN_MANAGER_ENV_FILE"]), token, admin)'
+  chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"
+  chmod 0600 "${ENV_FILE}"
   unset token
   restart_bot
   echo "توکن جدید اعتبارسنجی و ذخیره شد؛ سرویس فعال است."

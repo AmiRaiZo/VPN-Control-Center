@@ -23,6 +23,8 @@ def test_vpn_help_has_requested_maintenance_actions_and_safe_uninstall():
         assert label in script
     assert "releases/latest" in script
     assert '== "REMOVE"' in script
+    assert script.count('chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"') == 2
+    assert script.count('chmod 0600 "${ENV_FILE}"') == 2
 
 
 def test_admin_home_button_is_only_added_for_authorized_users():
@@ -35,4 +37,3 @@ def test_admin_cli_supports_subordinate_admin_creation():
     source = (ROOT / "src/vpn_manager/admin_cli.py").read_text(encoding="utf-8")
     assert '"admin", "finance", "support"' in source
     assert '"source": "vpn-help"' in source
-
