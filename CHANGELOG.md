@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.8
+
+- Add the Persian customer profile with one-tap Telegram ID copy, wallet balance, complete paginated order history and paginated active subscriptions, scoped strictly to the requesting Telegram account.
+- Add persistent database-backed Super Admin promotion/demotion with confirmation and audit events while preserving environment recovery owners; paginate the administrator list and require confirmation before changing an administrator's active state.
+- Replace transient FSM prompts between stages, remove processed form input and temporary prompts where Telegram permits it, and preserve `/cancel`, receipt photos and important purchase/payment results.
+- Improve plan selection and plan details, group protocol configuration documents into Telegram albums with individual-send fallback, and add a bundled eight-frame purchase/delivery animation with a text fallback.
+- Report incomplete config delivery honestly and retain the subscription recovery path instead of claiming that failed file uploads succeeded.
+
 ## 1.1.7
 
 - Remove any previously configured Telegram webhook before starting long polling, preserving pending updates so `/start` and other messages can be received.

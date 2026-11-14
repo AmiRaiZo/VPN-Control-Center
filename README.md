@@ -1,4 +1,4 @@
-# VPN Control Center 1.1.7
+# VPN Control Center 1.1.8
 
 Telegram-based administration and sales control plane for one or more `vpn-ui` instances from [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui).
 
@@ -12,6 +12,9 @@ Telegram-based administration and sales control plane for one or more `vpn-ui` i
 - Core status/install and Xray VPN Outbound management; outbound settings currently require administrator-supplied JSON.
 - Customer search/status, plan catalog and editing, orders, manual receipt review, wallet and subscription purchase/renewal/retry.
 - `owner`, `admin`, `finance`, and `support` roles, encrypted client payloads, append-style wallet ledger with idempotency keys, and audit events for selected administrative/financial operations.
+- Persian customer profile with one-tap numeric Telegram ID copy, wallet balance, complete paginated order history and active subscriptions; history callbacks are scoped to the requesting Telegram account.
+- Persistent database-backed Super Admin promotion/demotion with audit records, paginated administrator list, confirmation before enabling/disabling an administrator, and automatic cleanup of transient form prompts.
+- Grouped protocol configuration delivery with individual-document fallback, explicit partial-delivery reporting and a lightweight animated delivery indicator with text fallback.
 
 See [README_FA.md](README_FA.md) for the Persian setup and operator guide and [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for the acceptance ledger.
 
@@ -46,7 +49,7 @@ Keep `PANEL_CREDENTIAL_ENCRYPTION_KEY` safe and stable. Replacing it without a p
 
 ## Sales flow
 
-An administrator adds a panel, synchronizes its inbounds, creates a plan and configures the manual payment instructions. A customer creates an order, sends a receipt photo with the full order UUID in its caption, and waits for an authorized administrator to approve or reject it. Provisioning runs only after approval. Wallet top-ups follow the same manual-review process. Wallet purchases, renewals and provisioning retries are available, but crash recovery/reconciliation across the database and remote panel still needs further work. The Super Admin can add subordinate admins from `vpn-help` and assign per-area permission overrides in Telegram. A five-minute lifecycle worker sends 24-hour reminders and attempts to disable expired clients; run only one bot instance until distributed scheduler locking is added.
+An administrator adds a panel, synchronizes its inbounds, creates a plan and configures the manual payment instructions. A customer creates an order, sends a receipt photo with the full order UUID in its caption, and waits for an authorized administrator to approve or reject it. Provisioning runs only after approval. Wallet top-ups follow the same manual-review process. Customers can use **مشخصات من** to copy their numeric Telegram ID, inspect their wallet and browse all orders and active subscriptions. Wallet purchases, renewals and provisioning retries are available, but crash recovery/reconciliation across the database and remote panel still needs further work. Super Admins can promote/demote persistent database Super Admins and assign per-area permission overrides to subordinate admins. A five-minute lifecycle worker sends 24-hour reminders and attempts to disable expired clients; run only one bot instance until distributed scheduler locking is added.
 
 ## API and protocol caveats
 

@@ -7,10 +7,12 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -20,11 +22,13 @@ from aiogram.types import (
     BotCommand,
     BufferedInputFile,
     CallbackQuery,
+    CopyTextButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaDocument,
     Message,
 )
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from vpn_manager.commerce import (
@@ -167,6 +171,8 @@ async def _admin_role(session, telegram_id: int) -> str | None:
     )
     if not admin:
         return None
+    if admin.role == "owner":
+        return "owner"
     custom = (admin.extra_data or {}).get("permissions")
     if isinstance(custom, list):
         allowed = sorted({str(item) for item in custom if str(item) in _permission_areas()})
@@ -266,15 +272,37 @@ class AdminFSMAccessMiddleware(BaseMiddleware):
         state = data.get("state")
         if state is None:
             return await handler(event, data)
-        area = _admin_fsm_area(await state.get_state())
+        state_name = await state.get_state()
+        if state_name is None:
+            return await handler(event, data)
+        stored = await state.get_data() if hasattr(state, "get_data") else {}
+        previous_prompt_id = stored.get("_prompt_message_id")
+        area = _admin_fsm_area(state_name)
         if area is not None:
             if event.text is None:
                 await event.answer("برای این مرحله فقط پیام متنی ارسال کنید؛ یا /cancel بزنید.")
                 return None
             if not await _message_can(event, area):
                 await state.clear()
+                await _delete_message_quietly(event)
+                if previous_prompt_id:
+                    try:
+                        await event.bot.delete_message(event.chat.id, int(previous_prompt_id))
+                    except (TelegramAPIError, RuntimeError, ValueError):
+                        pass
                 return None
-        return await handler(event, data)
+        try:
+            return await handler(event, data)
+        finally:
+            # User input in a form is transient. Remove it after processing so
+            # passwords, panel details and routine form answers do not clutter chat.
+            if event.text and not event.text.startswith("/cancel"):
+                await _delete_message_quietly(event)
+            if previous_prompt_id:
+                try:
+                    await event.bot.delete_message(event.chat.id, int(previous_prompt_id))
+                except TelegramAPIError:
+                    pass
 
 
 router.message.outer_middleware(AdminFSMAccessMiddleware())
@@ -297,10 +325,40 @@ def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
     rows = [
         [("🛍 خرید سرویس", "shop:plans"), ("📦 اشتراک‌های من", "shop:subs")],
         [("💳 کیف پول", "shop:wallet"), ("🧾 سفارش‌های من", "shop:orders")],
+        [("👤 مشخصات من", "shop:profile")],
     ]
     if admin:
         rows.append([("🛡 پنل ادمین", "adm:home")])
     return _kb(rows)
+
+
+async def _delete_message_quietly(message: Message) -> None:
+    try:
+        await message.delete()
+    except (TelegramAPIError, RuntimeError):
+        pass
+
+
+async def _state_prompt(message: Message, state: FSMContext, text: str, **kwargs) -> Message:
+    """Replace the previous transient form prompt and remember the new one."""
+    stored = await state.get_data()
+    previous_prompt_id = stored.get("_prompt_message_id")
+    if previous_prompt_id:
+        try:
+            await message.bot.delete_message(message.chat.id, int(previous_prompt_id))
+        except (TelegramAPIError, RuntimeError, ValueError):
+            pass
+    sent = await message.answer(text, **kwargs)
+    await state.update_data(_prompt_message_id=sent.message_id)
+    return sent
+
+
+async def _edit_or_answer(message: Message, text: str, **kwargs) -> Message:
+    """Prefer editing the current bot message; fall back to one new message."""
+    try:
+        return await message.edit_text(text, **kwargs)
+    except TelegramAPIError:
+        return await message.answer(text, **kwargs)
 
 
 def _admin_keyboard(role: str) -> InlineKeyboardMarkup:
@@ -687,12 +745,15 @@ async def _store_subscription_delivery(
         root += f"/{base_path}"
     subscription_url = f"{root}/sub/{payload['subId']}"
     lines = [
-        "✅ سرویس شما فعال شد.",
+        "✅ سرویس شما با موفقیت آماده شد.",
+        "━━━━━━━━━━━━━━━━━━",
         f"نام سرویس: {service.name}",
         f"پروتکل: {service.protocol}",
         f"شناسه: {payload.get('email', '-')}",
-        f"لینک اشتراک: {subscription_url}",
         f"اعتبار تا: {subscription.expires_at:%Y-%m-%d %H:%M UTC}",
+        "━━━━━━━━━━━━━━━━━━",
+        "برای وارد کردن تنظیمات، فایل‌های پیوست را در برنامهٔ VPN خود Import کنید.",
+        "لینک اشتراک نیز از دکمهٔ کپی زیر قابل دریافت است.",
     ]
     if payload.get("id"):
         lines.append(f"نام کاربری/شناسه ورود: {payload['id']}")
@@ -735,27 +796,125 @@ async def _store_subscription_delivery(
     return "\n".join(lines), subscription_url, files
 
 
-async def _send_subscription_files(bot: Bot, telegram_id: int, files: list[dict[str, Any]]) -> None:
-    for item in files:
+async def _send_subscription_files(bot: Bot, telegram_id: int, files: list[dict[str, Any]]) -> bool:
+    """Send protocol-native config files as one tidy Telegram document album."""
+    if not files:
+        return True
+
+    async def send_one(item: dict[str, Any]) -> bool:
+        filename = (
+            str(item.get("filename") or "vpn-config.txt").replace("\\", "_").replace("/", "_")
+        )
         try:
             await bot.send_document(
                 telegram_id,
-                BufferedInputFile(item["content"], filename=item["filename"]),
+                BufferedInputFile(item["content"], filename=filename),
+                caption=f"📎 فایل تنظیمات: {filename}",
             )
+            return True
         except TelegramAPIError as exc:
             logger.warning(
                 "Could not send subscription config to customer %s (%s)",
                 telegram_id,
                 type(exc).__name__,
             )
+            return False
+
+    all_sent = True
+    for offset in range(0, len(files), 10):
+        group = files[offset : offset + 10]
+        try:
+            await bot.send_chat_action(telegram_id, ChatAction.UPLOAD_DOCUMENT)
+        except TelegramAPIError:
+            pass
+        if len(group) == 1:
+            all_sent = await send_one(group[0]) and all_sent
+            continue
+        media = [
+            InputMediaDocument(
+                media=BufferedInputFile(
+                    item["content"],
+                    filename=str(item.get("filename") or "vpn-config.txt")
+                    .replace("\\", "_")
+                    .replace("/", "_"),
+                ),
+                caption=f"📎 {str(item.get('filename') or 'vpn-config.txt')[:900]}",
+            )
+            for item in group
+        ]
+        try:
+            await bot.send_media_group(telegram_id, media=media)
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Could not send grouped subscription configs to customer %s (%s); falling back to individual documents",
+                telegram_id,
+                type(exc).__name__,
+            )
+            for item in group:
+                all_sent = await send_one(item) and all_sent
+    return all_sent
+
+
+def _subscription_delivery_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📋 کپی لینک اشتراک",
+                    copy_text=CopyTextButton(text=subscription_url),
+                )
+            ],
+            [InlineKeyboardButton(text="📦 مشاهده اشتراک‌های من", callback_data="shop:subs")],
+        ]
+    )
 
 
 async def _send_subscription_delivery(
-    bot: Bot, telegram_id: int, delivery: tuple[str, str, list[dict[str, Any]]]
-) -> None:
-    message, _, files = delivery
-    await _notify_customer(bot, telegram_id, message)
-    await _send_subscription_files(bot, telegram_id, files)
+    bot: Bot,
+    telegram_id: int,
+    delivery: tuple[str, str, list[dict[str, Any]]],
+    *,
+    status_message: Message | None = None,
+) -> bool:
+    message, subscription_url, files = delivery
+    reply_markup = _subscription_delivery_keyboard(subscription_url)
+    try:
+        if status_message is not None:
+            await status_message.edit_text(message, reply_markup=reply_markup)
+        else:
+            await bot.send_message(telegram_id, message, reply_markup=reply_markup)
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Could not send subscription summary to customer %s (%s)",
+            telegram_id,
+            type(exc).__name__,
+        )
+        return False
+    animation_message = (
+        await _send_progress_animation(bot, telegram_id, "در حال ارسال فایل‌های کانفیگ شما…")
+        if files
+        else None
+    )
+    try:
+        return await _send_subscription_files(bot, telegram_id, files)
+    finally:
+        if animation_message is not None:
+            await _delete_message_quietly(animation_message)
+
+
+async def _send_progress_animation(bot: Bot, chat_id: int, caption: str) -> Message | None:
+    """Send the bundled lightweight purchase animation; callers retain a text fallback."""
+    asset = Path(__file__).parent / "assets" / "purchase-progress.gif"
+    try:
+        payload = asset.read_bytes()
+        return await bot.send_animation(
+            chat_id,
+            BufferedInputFile(payload, filename="vpn-purchase-progress.gif"),
+            caption=caption,
+        )
+    except (OSError, TelegramAPIError) as exc:
+        logger.info("Purchase animation unavailable for chat %s (%s)", chat_id, type(exc).__name__)
+        return None
 
 
 async def _approve_order(bot: Bot, order_id: uuid.UUID, actor_id: int) -> str:
@@ -820,7 +979,9 @@ async def _approve_order(bot: Bot, order_id: uuid.UUID, actor_id: int) -> str:
             return f"پرداخت ثبت شد، ولی Provisioning شکست خورد: {type(exc).__name__}. سفارش را می‌توان Retry کرد."
         try:
             delivery = await _store_subscription_delivery(session, subscription)
-            await _send_subscription_delivery(bot, order.customer.telegram_id, delivery)
+            delivered = await _send_subscription_delivery(bot, order.customer.telegram_id, delivery)
+            if not delivered:
+                return "پرداخت تأیید و سرویس ساخته شد؛ ارسال پیام/فایل کامل نشد. کاربر می‌تواند از «اشتراک‌های من» دوباره کانفیگ را دریافت کند."
         except (ValueError, KeyError, TypeError) as exc:
             logger.exception("Subscription delivered but message rendering failed for %s", order.id)
             return f"سرویس روی پنل فعال شد، اما ساخت پیام تحویل خطا داشت: {type(exc).__name__}. از بخش اشتراک‌های من قابل بازیابی است."
@@ -867,7 +1028,9 @@ async def _retry_order(bot: Bot, order_id: uuid.UUID, actor_id: int) -> str:
         try:
             delivery = await _store_subscription_delivery(session, subscription)
             if customer and customer.telegram_id:
-                await _send_subscription_delivery(bot, customer.telegram_id, delivery)
+                delivered = await _send_subscription_delivery(bot, customer.telegram_id, delivery)
+                if not delivered:
+                    return "سرویس ساخته شد، اما ارسال کامل کانفیگ انجام نشد؛ کاربر از «اشتراک‌های من» دوباره دریافت کند."
         except (ValueError, KeyError, TypeError) as exc:
             logger.exception("Retry succeeded but delivery message failed for %s", order_id)
             return f"سرویس ساخته شد، اما ارسال مشخصات خطا داشت: {type(exc).__name__}."
@@ -905,10 +1068,261 @@ async def admin_command(message: Message) -> None:
 
 @router.message(Command("cancel"))
 async def cancel_handler(message: Message, state: FSMContext) -> None:
+    stored = await state.get_data()
+    previous_prompt_id = stored.get("_prompt_message_id")
     await state.clear()
+    if previous_prompt_id:
+        try:
+            await message.bot.delete_message(message.chat.id, int(previous_prompt_id))
+        except (TelegramAPIError, RuntimeError, ValueError):
+            pass
     await message.answer(
         "عملیات لغو شد.", reply_markup=_home_keyboard(await _is_admin(message.from_user.id))
     )
+
+
+def _profile_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📋 کپی آیدی عددی",
+                    copy_text=CopyTextButton(text=str(telegram_id)),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🧾 سوابق تمام خریدها", callback_data="shop:profile:orders:0"
+                )
+            ],
+            [InlineKeyboardButton(text="✅ سرویس‌های فعال", callback_data="shop:profile:active:0")],
+            [InlineKeyboardButton(text="🔄 بروزرسانی مشخصات", callback_data="shop:profile")],
+            [InlineKeyboardButton(text="↩️ منوی اصلی", callback_data="home")],
+        ]
+    )
+
+
+def _order_status_label(status: str) -> str:
+    return {
+        "pending_payment": "در انتظار پرداخت",
+        "paid": "پرداخت‌شده",
+        "processing": "در حال آماده‌سازی",
+        "fulfilled": "تکمیل‌شده",
+        "rejected": "ردشده",
+        "refunded": "مستردشده",
+        "fulfillment_failed": "نیازمند پیگیری",
+        "cancelled": "لغوشده",
+    }.get(status, f"وضعیت نامشخص ({status})")
+
+
+def _order_type_label(order_type: str) -> str:
+    return {
+        "subscription": "خرید سرویس",
+        "wallet_topup": "شارژ کیف پول",
+    }.get(order_type, f"سفارش دیگر ({order_type})")
+
+
+@router.callback_query(F.data == "shop:profile")
+async def shop_profile(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.from_user is None:
+        return
+    now = utc_now()
+    async with AsyncSessionFactory() as session:
+        customer = await get_or_create_customer(session, callback.from_user)
+        if customer.status != "active":
+            await callback.message.answer("حساب کاربری شما غیرفعال است.")
+            return
+        balance = await wallet_balance(session, customer.id)
+        order_count = (
+            await session.scalar(
+                select(func.count(Order.id)).where(Order.customer_id == customer.id)
+            )
+            or 0
+        )
+        active_filter = (
+            Subscription.customer_id == customer.id,
+            Subscription.status == "active",
+            or_(Subscription.expires_at.is_(None), Subscription.expires_at > now),
+        )
+        active_count = (
+            await session.scalar(select(func.count(Subscription.id)).where(*active_filter)) or 0
+        )
+        recent_orders = (
+            await session.scalars(
+                select(Order)
+                .where(Order.customer_id == customer.id)
+                .order_by(Order.created_at.desc())
+                .limit(3)
+            )
+        ).all()
+        active_subscriptions = (
+            await session.scalars(
+                select(Subscription)
+                .options(selectinload(Subscription.plan), selectinload(Subscription.service))
+                .where(*active_filter)
+                .order_by(Subscription.expires_at.asc().nulls_last())
+                .limit(3)
+            )
+        ).all()
+        await session.commit()
+
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "ثبت نشده"
+    name = (
+        " ".join(
+            part for part in (callback.from_user.first_name, callback.from_user.last_name) if part
+        )
+        or "ثبت نشده"
+    )
+    lines = [
+        "👤 مشخصات من",
+        f"نام: {name}",
+        f"نام کاربری: {username}",
+        f"آیدی عددی: {callback.from_user.id}",
+        f"موجودی کیف پول: {_price(balance, 'IRR')}",
+        f"تعداد کل سفارش‌ها: {order_count}",
+        f"سرویس‌های فعال: {active_count}",
+    ]
+    if recent_orders:
+        lines.append("\n🧾 آخرین خریدها")
+        lines.extend(
+            f"• {_order_type_label(order.order_type)} | {_price(Decimal(order.amount), order.currency)} | {_order_status_label(order.status)}"
+            for order in recent_orders
+        )
+    else:
+        lines.append("\nهنوز خریدی در حساب شما ثبت نشده است.")
+    if active_subscriptions:
+        lines.append("\n✅ اشتراک‌های فعال")
+        for subscription in active_subscriptions:
+            plan_name = subscription.plan.name if subscription.plan else "اشتراک"
+            service_name = subscription.service.name if subscription.service else "سرویس"
+            expiry = (
+                f"تا {subscription.expires_at:%Y-%m-%d %H:%M} UTC"
+                if subscription.expires_at
+                else "بدون تاریخ انقضا"
+            )
+            lines.append(f"• {plan_name} · {service_name} · {expiry}")
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=_profile_keyboard(callback.from_user.id),
+    )
+
+
+@router.callback_query(F.data.startswith("shop:profile:orders:"))
+async def shop_profile_orders(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.from_user is None:
+        return
+    try:
+        page = max(0, int(callback.data.rsplit(":", 1)[1]))
+    except ValueError:
+        page = 0
+    page_size = 5
+    async with AsyncSessionFactory() as session:
+        customer = await session.scalar(
+            select(Customer).where(Customer.telegram_id == callback.from_user.id)
+        )
+        if customer is None:
+            await callback.message.edit_text(
+                "هنوز سابقه خریدی برای شما ثبت نشده است.",
+                reply_markup=_kb([[("↩️ مشخصات من", "shop:profile")]]),
+            )
+            return
+        total = (
+            await session.scalar(
+                select(func.count(Order.id)).where(Order.customer_id == customer.id)
+            )
+            or 0
+        )
+        page = min(page, max(0, (total - 1) // page_size)) if total else 0
+        orders = (
+            await session.scalars(
+                select(Order)
+                .where(Order.customer_id == customer.id)
+                .order_by(Order.created_at.desc())
+                .limit(page_size)
+                .offset(page * page_size)
+            )
+        ).all()
+    lines = [f"🧾 سوابق خرید شما · {total} سفارش"]
+    for order in orders:
+        lines.append(
+            f"\n• {_order_type_label(order.order_type)}\n"
+            f"مبلغ: {_price(Decimal(order.amount), order.currency)}\n"
+            f"وضعیت: {_order_status_label(order.status)}\n"
+            f"تاریخ: {order.created_at:%Y-%m-%d %H:%M} UTC\n"
+            f"کد: {str(order.id)[:8]}"
+        )
+    rows = []
+    if page > 0:
+        rows.append([("⬅️ صفحه قبل", f"shop:profile:orders:{page - 1}")])
+    if (page + 1) * page_size < total:
+        rows.append([("صفحه بعد ➡️", f"shop:profile:orders:{page + 1}")])
+    rows.extend([[("↩️ مشخصات من", "shop:profile")], [("↩️ منوی اصلی", "home")]])
+    await callback.message.edit_text("\n".join(lines), reply_markup=_kb(rows))
+
+
+@router.callback_query(F.data.startswith("shop:profile:active:"))
+async def shop_profile_active(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.from_user is None:
+        return
+    try:
+        page = max(0, int(callback.data.rsplit(":", 1)[1]))
+    except ValueError:
+        page = 0
+    page_size = 5
+    now = utc_now()
+    async with AsyncSessionFactory() as session:
+        customer = await session.scalar(
+            select(Customer).where(Customer.telegram_id == callback.from_user.id)
+        )
+        if customer is None:
+            subscriptions = []
+            total = 0
+        else:
+            active_filter = (
+                Subscription.customer_id == customer.id,
+                Subscription.status == "active",
+                or_(Subscription.expires_at.is_(None), Subscription.expires_at > now),
+            )
+            total = (
+                await session.scalar(select(func.count(Subscription.id)).where(*active_filter)) or 0
+            )
+            page = min(page, max(0, (total - 1) // page_size)) if total else 0
+            subscriptions = (
+                await session.scalars(
+                    select(Subscription)
+                    .options(selectinload(Subscription.plan), selectinload(Subscription.service))
+                    .where(*active_filter)
+                    .order_by(Subscription.expires_at.asc().nulls_last())
+                    .limit(page_size)
+                    .offset(page * page_size)
+                )
+            ).all()
+    lines = [f"✅ اشتراک‌های فعال من · {total}"]
+    rows = []
+    for subscription in subscriptions:
+        service_name = subscription.service.name if subscription.service else "سرویس"
+        plan_name = subscription.plan.name if subscription.plan else "اشتراک"
+        expiry = (
+            f"{subscription.expires_at:%Y-%m-%d %H:%M} UTC"
+            if subscription.expires_at
+            else "نامحدود"
+        )
+        lines.append(f"\n• {plan_name} — {service_name}\nاعتبار: {expiry}")
+        rows.append([(f"📦 جزئیات {plan_name[:30]}", f"shop:sub:{subscription.id}")])
+    if not subscriptions:
+        lines.append("\nدر حال حاضر اشتراک فعالی ندارید.")
+    nav = []
+    if page > 0:
+        nav.append(("⬅️ قبلی", f"shop:profile:active:{page - 1}"))
+    if (page + 1) * page_size < total:
+        nav.append(("بعدی ➡️", f"shop:profile:active:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.extend([[("↩️ مشخصات من", "shop:profile")], [("↩️ منوی اصلی", "home")]])
+    await callback.message.edit_text("\n".join(lines), reply_markup=_kb(rows))
 
 
 @router.callback_query(F.data == "home")
@@ -955,21 +1369,21 @@ async def panel_add_start(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     await state.set_state(PanelAdd.name)
-    await callback.message.answer("نام نمایشی پنل را بفرستید:")
+    await _state_prompt(callback.message, state, "نام نمایشی پنل را بفرستید:")
 
 
 @router.message(PanelAdd.name)
 async def panel_add_name(message: Message, state: FSMContext) -> None:
     await state.update_data(name=message.text.strip()[:120])
     await state.set_state(PanelAdd.url)
-    await message.answer("آدرس کامل پنل را با https:// بفرستید:")
+    await _state_prompt(message, state, "آدرس کامل پنل را با https:// بفرستید:")
 
 
 @router.message(PanelAdd.url)
 async def panel_add_url(message: Message, state: FSMContext) -> None:
     await state.update_data(base_url=message.text.strip().rstrip("/"))
     await state.set_state(PanelAdd.base_path)
-    await message.answer("Base Path پنل را بفرستید؛ اگر ندارد فقط - ارسال کنید:")
+    await _state_prompt(message, state, "Base Path پنل را بفرستید؛ اگر ندارد فقط - ارسال کنید:")
 
 
 @router.message(PanelAdd.base_path)
@@ -977,15 +1391,17 @@ async def panel_add_path(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     await state.update_data(base_path="" if value == "-" else value.strip("/"))
     await state.set_state(PanelAdd.username)
-    await message.answer("نام کاربری مدیر پنل:")
+    await _state_prompt(message, state, "نام کاربری مدیر پنل:")
 
 
 @router.message(PanelAdd.username)
 async def panel_add_username(message: Message, state: FSMContext) -> None:
     await state.update_data(username=message.text.strip())
     await state.set_state(PanelAdd.password)
-    await message.answer(
-        "رمز عبور پنل را بفرستید. پیام پس از دریافت حذف می‌شود؛ آن را در گروه ارسال نکنید:"
+    await _state_prompt(
+        message,
+        state,
+        "رمز عبور پنل را بفرستید. پیام پس از دریافت حذف می‌شود؛ آن را در گروه ارسال نکنید:",
     )
 
 
@@ -1043,8 +1459,10 @@ async def _finish_panel_add(
         )
     except PanelTwoFactorRequired:
         await state.set_state(PanelAdd.totp_seed)
-        await message.answer(
-            "این پنل 2FA دارد. برای اتصال خودکار دائمی، Seed/Base32 اپلیکیشن Authenticator را بفرستید (کد ۶ رقمی یک‌بارمصرف نفرستید). پیام حذف خواهد شد. اگر Seed را ندارید /cancel کنید و 2FA را برای حساب API غیرفعال کنید."
+        await _state_prompt(
+            message,
+            state,
+            "این پنل 2FA دارد. برای اتصال خودکار دائمی، Seed/Base32 اپلیکیشن Authenticator را بفرستید (کد ۶ رقمی یک‌بارمصرف نفرستید). پیام حذف خواهد شد. اگر Seed را ندارید /cancel کنید و 2FA را برای حساب API غیرفعال کنید.",
         )
     except Exception as exc:
         logger.exception("Panel add failed (%s)", type(exc).__name__)
@@ -1060,7 +1478,7 @@ async def panel_add_password(message: Message, state: FSMContext) -> None:
     except TelegramAPIError as exc:
         logger.debug("Could not delete credential message (%s)", type(exc).__name__)
     if not password:
-        await message.answer("رمز عبور خالی است. دوباره ارسال کنید:")
+        await _state_prompt(message, state, "رمز عبور خالی است. دوباره ارسال کنید:")
         return
     await state.update_data(password=password)
     await _finish_panel_add(message, state)
@@ -1076,7 +1494,7 @@ async def panel_add_totp(message: Message, state: FSMContext) -> None:
     try:
         totp_code(seed)
     except ValueError:
-        await message.answer("Seed معتبر Base32 نیست. دوباره ارسال کنید یا /cancel:")
+        await _state_prompt(message, state, "Seed معتبر Base32 نیست. دوباره ارسال کنید یا /cancel:")
         return
     await _finish_panel_add(message, state, seed)
 
@@ -1094,8 +1512,10 @@ async def panel_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(panel_id=str(panel.id))
     await state.set_state(PanelEdit.url)
-    await callback.message.answer(
-        f"آدرس جدید پنل را وارد کنید یا - برای حفظ مقدار فعلی:\n{panel.base_url}"
+    await _state_prompt(
+        callback.message,
+        state,
+        f"آدرس جدید پنل را وارد کنید یا - برای حفظ مقدار فعلی:\n{panel.base_url}",
     )
 
 
@@ -1103,11 +1523,13 @@ async def panel_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
 async def panel_edit_url(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if value != "-" and not value.startswith("https://"):
-        await message.answer("آدرس باید با https:// شروع شود یا - بفرستید:")
+        await _state_prompt(message, state, "آدرس باید با https:// شروع شود یا - بفرستید:")
         return
     await state.update_data(base_url=value)
     await state.set_state(PanelEdit.base_path)
-    await message.answer("Base Path جدید یا - برای حفظ مقدار فعلی (برای خالی‌کردن، فقط / بفرستید):")
+    await _state_prompt(
+        message, state, "Base Path جدید یا - برای حفظ مقدار فعلی (برای خالی‌کردن، فقط / بفرستید):"
+    )
 
 
 @router.message(PanelEdit.base_path)
@@ -1115,7 +1537,7 @@ async def panel_edit_base_path(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     await state.update_data(base_path=value)
     await state.set_state(PanelEdit.username)
-    await message.answer("نام کاربری جدید یا - برای حفظ مقدار فعلی:")
+    await _state_prompt(message, state, "نام کاربری جدید یا - برای حفظ مقدار فعلی:")
 
 
 @router.message(PanelEdit.username)
@@ -1123,7 +1545,7 @@ async def panel_edit_username(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     await state.update_data(username=value)
     await state.set_state(PanelEdit.password)
-    await message.answer("رمز عبور جدید یا - برای حفظ رمز فعلی (پیام حذف می‌شود):")
+    await _state_prompt(message, state, "رمز عبور جدید یا - برای حفظ رمز فعلی (پیام حذف می‌شود):")
 
 
 async def _finish_panel_edit(
@@ -1190,8 +1612,10 @@ async def _finish_panel_edit(
         await message.answer(f"✅ اتصال پنل بروزرسانی و تست شد؛ {count} اینباند Sync شد.")
     except PanelTwoFactorRequired:
         await state.set_state(PanelEdit.totp_seed)
-        await message.answer(
-            "پنل 2FA می‌خواهد و Seed قبلی موجود نیست. Seed/Base32 اپلیکیشن Authenticator را بفرستید؛ پیام حذف می‌شود:"
+        await _state_prompt(
+            message,
+            state,
+            "پنل 2FA می‌خواهد و Seed قبلی موجود نیست. Seed/Base32 اپلیکیشن Authenticator را بفرستید؛ پیام حذف می‌شود:",
         )
     except Exception as exc:
         logger.exception("Panel connection edit failed")
@@ -1207,7 +1631,7 @@ async def panel_edit_password(message: Message, state: FSMContext) -> None:
     except TelegramAPIError as exc:
         logger.debug("Could not delete updated panel password message (%s)", type(exc).__name__)
     if not value:
-        await message.answer("رمز خالی است؛ رمز جدید یا - را ارسال کنید:")
+        await _state_prompt(message, state, "رمز خالی است؛ رمز جدید یا - را ارسال کنید:")
         return
     await state.update_data(password=value)
     await _finish_panel_edit(message, state)
@@ -1223,7 +1647,7 @@ async def panel_edit_totp(message: Message, state: FSMContext) -> None:
     try:
         totp_code(seed)
     except ValueError:
-        await message.answer("Seed معتبر Base32 نیست؛ دوباره ارسال کنید:")
+        await _state_prompt(message, state, "Seed معتبر Base32 نیست؛ دوباره ارسال کنید:")
         return
     await _finish_panel_edit(message, state, seed)
 
@@ -1445,7 +1869,9 @@ async def outbound_add_start(callback: CallbackQuery, state: FSMContext) -> None
             panel_id=str(panel_id), available_kinds=[item.get("kind") for item in available]
         )
         await state.set_state(OutboundAdd.tag)
-        await callback.message.answer("یک Tag یکتا برای تونل انتخاب کنید (فقط حروف، عدد، - و _):")
+        await _state_prompt(
+            callback.message, state, "یک Tag یکتا برای تونل انتخاب کنید (فقط حروف، عدد، - و _):"
+        )
     except Exception as exc:
         logger.exception("Could not load VPN outbound kinds")
         await callback.message.answer(f"❌ دریافت انواع تونل ناموفق بود: {str(exc)[:200]}")
@@ -1455,12 +1881,14 @@ async def outbound_add_start(callback: CallbackQuery, state: FSMContext) -> None
 async def outbound_add_tag(message: Message, state: FSMContext) -> None:
     tag = (message.text or "").strip()
     if not tag or len(tag) > 48 or not all(ch.isalnum() or ch in "-_" for ch in tag):
-        await message.answer("Tag نامعتبر است. فقط حروف، عدد، خط تیره و زیرخط مجاز است:")
+        await _state_prompt(
+            message, state, "Tag نامعتبر است. فقط حروف، عدد، خط تیره و زیرخط مجاز است:"
+        )
         return
     data = await state.get_data()
     await state.update_data(tag=tag)
     rows = [[(str(kind), f"outkind:{kind}")] for kind in data.get("available_kinds", []) if kind]
-    await message.answer("نوع تونل خروجی را انتخاب کنید:", reply_markup=_kb(rows))
+    await _state_prompt(message, state, "نوع تونل خروجی را انتخاب کنید:", reply_markup=_kb(rows))
 
 
 @router.callback_query(F.data.startswith("outkind:"))
@@ -1474,7 +1902,9 @@ async def outbound_add_kind(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.update_data(kind=kind)
     await state.set_state(OutboundAdd.remark)
-    await callback.message.answer("توضیح نمایشی تونل (در صورت نداشتن، - ارسال کنید):")
+    await _state_prompt(
+        callback.message, state, "توضیح نمایشی تونل (در صورت نداشتن، - ارسال کنید):"
+    )
 
 
 @router.message(OutboundAdd.remark)
@@ -1482,8 +1912,10 @@ async def outbound_add_remark(message: Message, state: FSMContext) -> None:
     remark = (message.text or "").strip()
     await state.update_data(remark="" if remark == "-" else remark[:160])
     await state.set_state(OutboundAdd.settings)
-    await message.answer(
-        "Settings را به‌صورت JSON معتبر بفرستید. ساختار دقیق به نوع تونل بستگی دارد؛ این داده مستقیم به درایور vpn-ui ارسال می‌شود. پیام حاوی Secret پس از دریافت حذف خواهد شد."
+    await _state_prompt(
+        message,
+        state,
+        "Settings را به‌صورت JSON معتبر بفرستید. ساختار دقیق به نوع تونل بستگی دارد؛ این داده مستقیم به درایور vpn-ui ارسال می‌شود. پیام حاوی Secret پس از دریافت حذف خواهد شد.",
     )
 
 
@@ -1543,7 +1975,7 @@ async def outbound_delete_start(callback: CallbackQuery, state: FSMContext) -> N
     await state.clear()
     await state.update_data(panel_id=panel_id)
     await state.set_state(OutboundDelete.tag)
-    await callback.message.answer("Tag دقیق تونلی که باید حذف شود را وارد کنید:")
+    await _state_prompt(callback.message, state, "Tag دقیق تونلی که باید حذف شود را وارد کنید:")
 
 
 @router.message(OutboundDelete.tag)
@@ -1564,10 +1996,14 @@ async def outbound_delete_tag(message: Message, state: FSMContext) -> None:
             finally:
                 await api.close()
         if not any(str(item.get("tag")) == tag for item in outbounds):
-            await message.answer("تونلی با این Tag پیدا نشد. دوباره وارد کنید یا /cancel:")
+            await _state_prompt(
+                message, state, "تونلی با این Tag پیدا نشد. دوباره وارد کنید یا /cancel:"
+            )
             return
         await state.update_data(tag=tag)
-        await message.answer(
+        await _state_prompt(
+            message,
+            state,
             f"⚠️ تونل خروجی «{tag}» حذف شود؟",
             reply_markup=_kb(
                 [
@@ -1738,7 +2174,7 @@ async def inbound_add_protocol(callback: CallbackQuery, state: FSMContext) -> No
     await state.clear()
     await state.update_data(panel_id=panel_id, protocol=protocol)
     await state.set_state(InboundAdd.name)
-    await callback.message.answer("نام اینباند:")
+    await _state_prompt(callback.message, state, "نام اینباند:")
 
 
 @router.message(InboundAdd.name)
@@ -1747,9 +2183,9 @@ async def inbound_add_name(message: Message, state: FSMContext) -> None:
     await state.set_state(InboundAdd.port)
     data = await state.get_data()
     if data["protocol"] == "gre":
-        await message.answer("GRE پورت ندارد؛ برای ادامه فقط - ارسال کنید:")
+        await _state_prompt(message, state, "GRE پورت ندارد؛ برای ادامه فقط - ارسال کنید:")
     else:
-        await message.answer("شماره پورت (1 تا 65535):")
+        await _state_prompt(message, state, "شماره پورت (1 تا 65535):")
 
 
 @router.message(InboundAdd.port)
@@ -2050,7 +2486,7 @@ async def managed_client_edit_start(callback: CallbackQuery, state: FSMContext) 
     await state.clear()
     await state.update_data(record_id=record_id)
     await state.set_state(ManagedClientEdit.traffic_gb)
-    await callback.message.answer("سقف حجم جدید به GB (0 = نامحدود):")
+    await _state_prompt(callback.message, state, "سقف حجم جدید به GB (0 = نامحدود):")
 
 
 @router.message(ManagedClientEdit.traffic_gb)
@@ -2060,11 +2496,11 @@ async def managed_client_edit_traffic(message: Message, state: FSMContext) -> No
         if traffic_gb < 0 or traffic_gb > Decimal(100000):
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer("عدد معتبر صفر یا بیشتر وارد کنید:")
+        await _state_prompt(message, state, "عدد معتبر صفر یا بیشتر وارد کنید:")
         return
     await state.update_data(traffic_limit_bytes=int(traffic_gb * Decimal(1024**3)))
     await state.set_state(ManagedClientEdit.days)
-    await message.answer("اعتبار باقی‌مانده به روز (0 = بدون انقضا):")
+    await _state_prompt(message, state, "اعتبار باقی‌مانده به روز (0 = بدون انقضا):")
 
 
 @router.message(ManagedClientEdit.days)
@@ -2074,11 +2510,11 @@ async def managed_client_edit_days(message: Message, state: FSMContext) -> None:
         if not 0 <= days <= 3650:
             raise ValueError
     except ValueError:
-        await message.answer("عدد بین 0 تا 3650 وارد کنید:")
+        await _state_prompt(message, state, "عدد بین 0 تا 3650 وارد کنید:")
         return
     await state.update_data(days=days)
     await state.set_state(ManagedClientEdit.devices)
-    await message.answer("حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 = نامحدود):")
+    await _state_prompt(message, state, "حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 = نامحدود):")
 
 
 @router.message(ManagedClientEdit.devices)
@@ -2190,7 +2626,7 @@ async def inbound_rename_start(callback: CallbackQuery, state: FSMContext) -> No
     await state.clear()
     await state.update_data(service_id=service_id)
     await state.set_state(InboundRename.name)
-    await callback.message.answer("نام جدید اینباند را بفرستید:")
+    await _state_prompt(callback.message, state, "نام جدید اینباند را بفرستید:")
 
 
 @router.message(InboundRename.name)
@@ -2229,7 +2665,7 @@ async def inbound_port_start(callback: CallbackQuery, state: FSMContext) -> None
     await state.clear()
     await state.update_data(service_id=service_id)
     await state.set_state(InboundPortEdit.port)
-    await callback.message.answer("پورت جدید اینباند را وارد کنید (1 تا 65535):")
+    await _state_prompt(callback.message, state, "پورت جدید اینباند را وارد کنید (1 تا 65535):")
 
 
 @router.message(InboundPortEdit.port)
@@ -2370,7 +2806,7 @@ async def customer_search_start(callback: CallbackQuery, state: FSMContext) -> N
         return
     await state.clear()
     await state.set_state(CustomerSearch.query)
-    await callback.message.answer("Telegram ID یا Username کاربر را وارد کنید:")
+    await _state_prompt(callback.message, state, "Telegram ID یا Username کاربر را وارد کنید:")
 
 
 @router.message(CustomerSearch.query)
@@ -2380,7 +2816,7 @@ async def customer_search_finish(message: Message, state: FSMContext) -> None:
         return
     query = (message.text or "").strip().lstrip("@")
     if len(query) < 2:
-        await message.answer("حداقل دو نویسه وارد کنید:")
+        await _state_prompt(message, state, "حداقل دو نویسه وارد کنید:")
         return
     async with AsyncSessionFactory() as session:
         statement = select(Customer).order_by(Customer.created_at.desc()).limit(20)
@@ -2630,8 +3066,10 @@ async def customer_wallet_adjust_start(callback: CallbackQuery, state: FSMContex
     await state.clear()
     await state.update_data(customer_id=customer_id)
     await state.set_state(WalletAdjust.amount)
-    await callback.message.answer(
-        "مبلغ اصلاح موجودی را با علامت وارد کنید؛ مثال +500000 برای افزایش یا -200000 برای کسر (ریال):"
+    await _state_prompt(
+        callback.message,
+        state,
+        "مبلغ اصلاح موجودی را با علامت وارد کنید؛ مثال +500000 برای افزایش یا -200000 برای کسر (ریال):",
     )
 
 
@@ -2645,11 +3083,13 @@ async def customer_wallet_adjust_amount(message: Message, state: FSMContext) -> 
         if amount == 0 or abs(amount) > Decimal(1000000000000):
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer("مبلغ غیرصفر و معتبر وارد کنید؛ افزایش با + و کسر با -:")
+        await _state_prompt(
+            message, state, "مبلغ غیرصفر و معتبر وارد کنید؛ افزایش با + و کسر با -:"
+        )
         return
     await state.update_data(amount=str(amount))
     await state.set_state(WalletAdjust.description)
-    await message.answer("علت اصلاح موجودی را وارد کنید (در دفتر مالی ثبت می‌شود):")
+    await _state_prompt(message, state, "علت اصلاح موجودی را وارد کنید (در دفتر مالی ثبت می‌شود):")
 
 
 @router.message(WalletAdjust.description)
@@ -2660,7 +3100,7 @@ async def customer_wallet_adjust_finish(message: Message, state: FSMContext) -> 
     data = await state.get_data()
     description = (message.text or "").strip()
     if len(description) < 3:
-        await message.answer("توضیح حداقل باید 3 نویسه باشد:")
+        await _state_prompt(message, state, "توضیح حداقل باید 3 نویسه باشد:")
         return
     amount = Decimal(data["amount"])
     try:
@@ -2768,18 +3208,18 @@ async def plan_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(plan_id=str(plan.id))
     await state.set_state(PlanEdit.name)
-    await callback.message.answer(f"نام جدید پلن (فعلی: {plan.name}):")
+    await _state_prompt(callback.message, state, f"نام جدید پلن (فعلی: {plan.name}):")
 
 
 @router.message(PlanEdit.name)
 async def plan_edit_name(message: Message, state: FSMContext) -> None:
     name = (message.text or "").strip()
     if not name:
-        await message.answer("نام نمی‌تواند خالی باشد:")
+        await _state_prompt(message, state, "نام نمی‌تواند خالی باشد:")
         return
     await state.update_data(name=name[:120])
     await state.set_state(PlanEdit.days)
-    await message.answer("مدت جدید به روز (1 تا 3650):")
+    await _state_prompt(message, state, "مدت جدید به روز (1 تا 3650):")
 
 
 @router.message(PlanEdit.days)
@@ -2789,11 +3229,11 @@ async def plan_edit_days(message: Message, state: FSMContext) -> None:
         if not 1 <= days <= 3650:
             raise ValueError
     except ValueError:
-        await message.answer("عدد بین 1 تا 3650 وارد کنید:")
+        await _state_prompt(message, state, "عدد بین 1 تا 3650 وارد کنید:")
         return
     await state.update_data(days=days)
     await state.set_state(PlanEdit.traffic_gb)
-    await message.answer("حجم جدید به GB (0 = نامحدود):")
+    await _state_prompt(message, state, "حجم جدید به GB (0 = نامحدود):")
 
 
 @router.message(PlanEdit.traffic_gb)
@@ -2803,11 +3243,11 @@ async def plan_edit_traffic(message: Message, state: FSMContext) -> None:
         if gb < 0 or gb > Decimal(100000):
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer("حجم معتبر وارد کنید:")
+        await _state_prompt(message, state, "حجم معتبر وارد کنید:")
         return
     await state.update_data(traffic_limit_bytes=int(gb * Decimal(1024**3)))
     await state.set_state(PlanEdit.devices)
-    await message.answer("حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 = نامحدود):")
+    await _state_prompt(message, state, "حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 = نامحدود):")
 
 
 @router.message(PlanEdit.devices)
@@ -2817,11 +3257,11 @@ async def plan_edit_devices(message: Message, state: FSMContext) -> None:
         if not 0 <= devices <= 64:
             raise ValueError
     except ValueError:
-        await message.answer("عدد بین 0 تا 64 وارد کنید:")
+        await _state_prompt(message, state, "عدد بین 0 تا 64 وارد کنید:")
         return
     await state.update_data(devices=devices)
     await state.set_state(PlanEdit.price)
-    await message.answer("قیمت جدید به ریال:")
+    await _state_prompt(message, state, "قیمت جدید به ریال:")
 
 
 @router.message(PlanEdit.price)
@@ -2847,7 +3287,9 @@ async def plan_edit_price(message: Message, state: FSMContext) -> None:
             await session.commit()
         await message.answer("✅ پلن به‌روزرسانی شد.")
     except (InvalidOperation, ValueError) as exc:
-        await message.answer(f"مقادیر معتبر نیست: {str(exc)[:150]}\nدوباره قیمت را وارد کنید:")
+        await _state_prompt(
+            message, state, f"مقادیر معتبر نیست: {str(exc)[:150]}\nدوباره قیمت را وارد کنید:"
+        )
         return
     await state.clear()
 
@@ -2878,14 +3320,14 @@ async def plan_add_service(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(service_id=callback.data.rsplit(":", 1)[1])
     await state.set_state(PlanAdd.name)
-    await callback.message.answer("نام پلن:")
+    await _state_prompt(callback.message, state, "نام پلن:")
 
 
 @router.message(PlanAdd.name)
 async def plan_add_name(message: Message, state: FSMContext) -> None:
     await state.update_data(name=(message.text or "").strip()[:120])
     await state.set_state(PlanAdd.days)
-    await message.answer("مدت اعتبار به روز (عدد صحیح مثبت):")
+    await _state_prompt(message, state, "مدت اعتبار به روز (عدد صحیح مثبت):")
 
 
 @router.message(PlanAdd.days)
@@ -2895,11 +3337,11 @@ async def plan_add_days(message: Message, state: FSMContext) -> None:
         if days <= 0 or days > 3650:
             raise ValueError
     except ValueError:
-        await message.answer("عدد معتبر بین 1 تا 3650 وارد کنید:")
+        await _state_prompt(message, state, "عدد معتبر بین 1 تا 3650 وارد کنید:")
         return
     await state.update_data(days=days)
     await state.set_state(PlanAdd.traffic_gb)
-    await message.answer("حجم به GB (برای نامحدود عدد 0):")
+    await _state_prompt(message, state, "حجم به GB (برای نامحدود عدد 0):")
 
 
 @router.message(PlanAdd.traffic_gb)
@@ -2909,12 +3351,12 @@ async def plan_add_traffic(message: Message, state: FSMContext) -> None:
         if gb < 0 or gb > Decimal(100000):
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer("حجم نامعتبر است؛ یک عدد صفر یا بیشتر وارد کنید:")
+        await _state_prompt(message, state, "حجم نامعتبر است؛ یک عدد صفر یا بیشتر وارد کنید:")
         return
     bytes_limit = int(gb * Decimal(1024**3))
     await state.update_data(traffic_limit_bytes=bytes_limit)
     await state.set_state(PlanAdd.devices)
-    await message.answer("حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 یعنی نامحدود):")
+    await _state_prompt(message, state, "حداکثر IP/اتصال هم‌زمان (limitIp؛ 0 یعنی نامحدود):")
 
 
 @router.message(PlanAdd.devices)
@@ -2924,11 +3366,11 @@ async def plan_add_devices(message: Message, state: FSMContext) -> None:
         if not 0 <= devices <= 64:
             raise ValueError
     except ValueError:
-        await message.answer("عدد بین 0 تا 64 وارد کنید:")
+        await _state_prompt(message, state, "عدد بین 0 تا 64 وارد کنید:")
         return
     await state.update_data(devices=devices)
     await state.set_state(PlanAdd.price)
-    await message.answer("قیمت به ریال (عدد صحیح):")
+    await _state_prompt(message, state, "قیمت به ریال (عدد صحیح):")
 
 
 @router.message(PlanAdd.price)
@@ -2960,7 +3402,9 @@ async def plan_add_price(message: Message, state: FSMContext) -> None:
             await session.commit()
         await message.answer("✅ پلن ساخته شد و در فروشگاه نمایش داده می‌شود.")
     except (InvalidOperation, ValueError) as exc:
-        await message.answer(f"قیمت/سرویس معتبر نیست: {str(exc)[:160]}\nدوباره قیمت را وارد کنید:")
+        await _state_prompt(
+            message, state, f"قیمت/سرویس معتبر نیست: {str(exc)[:160]}\nدوباره قیمت را وارد کنید:"
+        )
         return
     finally:
         if not message.text:
@@ -3065,7 +3509,10 @@ async def order_approve(callback: CallbackQuery, bot: Bot) -> None:
         return
     order_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     result = await _approve_order(bot, order_id, callback.from_user.id)
-    await callback.message.answer(result)
+    await callback.message.edit_text(
+        result,
+        reply_markup=_kb([[("↩️ بازگشت به سفارش‌ها", "adm:orders")]]),
+    )
 
 
 @router.callback_query(F.data.startswith("order:reject:"))
@@ -3113,7 +3560,9 @@ async def order_reject(callback: CallbackQuery, bot: Bot) -> None:
             customer.telegram_id,
             f"❌ پرداخت سفارش {str(order_id)[:8]} رد شد. برای پیگیری با پشتیبانی تماس بگیرید.",
         )
-    await callback.message.answer("پرداخت رد شد.")
+    await callback.message.edit_text(
+        "پرداخت رد شد.", reply_markup=_kb([[("↩️ بازگشت به سفارش‌ها", "adm:orders")]])
+    )
 
 
 @router.callback_query(F.data.startswith("order:retry:"))
@@ -3122,43 +3571,73 @@ async def order_retry(callback: CallbackQuery, bot: Bot) -> None:
         return
     order_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     result = await _retry_order(bot, order_id, callback.from_user.id)
-    await callback.message.answer(result)
+    await callback.message.edit_text(
+        result,
+        reply_markup=_kb([[("↩️ بازگشت به سفارش‌ها", "adm:orders")]]),
+    )
 
 
-@router.callback_query(F.data == "adm:admins")
+@router.callback_query(F.data.startswith("adm:admins"))
 async def admin_admins(callback: CallbackQuery) -> None:
     if not await _answer_admin(callback, "admins"):
         return
-    await _admin_admins_view(callback)
+    try:
+        page = max(0, int(callback.data.rsplit(":", 1)[1])) if callback.data != "adm:admins" else 0
+    except ValueError:
+        page = 0
+    await _admin_admins_view(callback, page)
 
 
-async def _admin_admins_view(callback: CallbackQuery) -> None:
+async def _admin_admins_view(callback: CallbackQuery, page: int = 0) -> None:
+    page_size = 8
     async with AsyncSessionFactory() as session:
-        admins = (await session.scalars(select(AdminUser).order_by(AdminUser.telegram_id))).all()
+        total = await session.scalar(select(func.count(AdminUser.id))) or 0
+        page = min(page, max(0, (total - 1) // page_size)) if total else 0
+        admins = (
+            await session.scalars(
+                select(AdminUser)
+                .order_by(AdminUser.telegram_id)
+                .limit(page_size)
+                .offset(page * page_size)
+            )
+        ).all()
     rows = [[("➕ افزودن مدیر", "admin:add")]]
     for admin in admins:
+        root = admin.telegram_id in _root_admins()
+        state_icon = (
+            "🔐" if root else "👑" if admin.role == "owner" else "🟢" if admin.is_active else "🔴"
+        )
         rows.append(
             [
                 (
-                    f"{'🟢' if admin.is_active else '🔴'} {admin.telegram_id} · {_admin_role_label(admin)}",
+                    f"{state_icon} {admin.telegram_id} · {_admin_role_label(admin)}",
                     f"admin:view:{admin.id}",
                 )
             ]
         )
-    for root_id in sorted(_root_admins()):
-        rows.append([(f"👑 {root_id} · مالک اصلی (غیرقابل حذف)", "adm:admins")])
+    navigation = []
+    if page > 0:
+        navigation.append(("⬅️ قبلی", f"adm:admins:{page - 1}"))
+    if (page + 1) * page_size < total:
+        navigation.append(("بعدی ➡️", f"adm:admins:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
     rows.append([("↩️ بازگشت", "adm:home")])
     await callback.message.edit_text(
-        "🛡 مدیران ربات؛ برای تنظیم مجوزهای هر مدیر روی شناسهٔ او بزنید. مالک اصلی از متغیر محیطی محافظت می‌شود.",
+        f"🛡 مدیریت مدیران · {total} حساب · صفحه {page + 1}/{max(1, (total + page_size - 1) // page_size)}\nبرای دیدن جزئیات، تغییر مجوزها یا ارتقا به سوپرادمین، حساب موردنظر را انتخاب کنید.\n🔐 مالک اصلی محیطی · 👑 سوپرادمین دائمی",
         reply_markup=_kb(rows),
     )
 
 
 def _admin_role_label(admin: AdminUser) -> str:
+    if admin.role == "owner":
+        return "مالک اصلی" if admin.telegram_id in _root_admins() else "سوپرادمین"
     permissions = (admin.extra_data or {}).get("permissions")
     if isinstance(permissions, list):
-        return f"اختصاصی ({len(set(permissions) & _permission_areas())} مجوز)"
-    return admin.role
+        return f"اختصاصی · {len(set(permissions) & _permission_areas())} مجوز"
+    return {"admin": "مدیر عملیات", "finance": "مدیر مالی", "support": "پشتیبانی"}.get(
+        admin.role, admin.role
+    )
 
 
 @router.callback_query(F.data.startswith("admin:view:"))
@@ -3166,6 +3645,10 @@ async def admin_view(callback: CallbackQuery) -> None:
     if not await _answer_admin(callback, "admins"):
         return
     admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    await admin_view_render(callback, admin_id)
+
+
+async def admin_view_render(callback: CallbackQuery, admin_id: uuid.UUID) -> None:
     async with AsyncSessionFactory() as session:
         admin = await session.get(AdminUser, admin_id)
         if admin is None:
@@ -3173,6 +3656,8 @@ async def admin_view(callback: CallbackQuery) -> None:
             return
         permissions = (admin.extra_data or {}).get("permissions")
         allowed = set(permissions) if isinstance(permissions, list) else None
+        is_environment_owner = admin.telegram_id in _root_admins()
+        is_database_owner = admin.role == "owner" and not is_environment_owner
         rows = []
         labels = {
             "panels": "پنل‌ها و سرویس‌ها",
@@ -3185,9 +3670,14 @@ async def admin_view(callback: CallbackQuery) -> None:
             "wallet": "کیف پول",
             "audit": "گزارش فعالیت مدیران",
         }
-        if allowed is None:
+        if is_environment_owner:
+            rows.append([("🔐 مالک اصلی؛ دسترسی از تنظیمات امن سرور می‌آید", "adm:admins")])
+        elif is_database_owner:
+            rows.append([("⬇️ تنزل به مدیر عملیات", f"admin:demote:{admin.id}")])
+        elif allowed is None:
             rows.append([("استفاده از دسترسی پیش‌فرض نقش", f"admin:permreset:{admin.id}")])
             rows.append([("ساخت دسترسی اختصاصی از نقش فعلی", f"admin:permscustom:{admin.id}")])
+            rows.append([("⭐ ارتقا به سوپرادمین کامل", f"admin:promote:{admin.id}")])
         else:
             for area, label in labels.items():
                 rows.append(
@@ -3199,13 +3689,145 @@ async def admin_view(callback: CallbackQuery) -> None:
                     ]
                 )
             rows.append([("بازگشت به دسترسی پیش‌فرض نقش", f"admin:permreset:{admin.id}")])
-            rows.append([("↩️ بازگشت به مدیران", "adm:admins")])
-        if admin.telegram_id not in _root_admins():
+            rows.append([("⭐ ارتقا به سوپرادمین کامل", f"admin:promote:{admin.id}")])
+        if not is_environment_owner and not is_database_owner:
             rows.append([("🔴/🟢 تغییر وضعیت مدیر", f"admin:toggle:{admin.id}")])
+        rows.append([("↩️ بازگشت به مدیران", "adm:admins")])
+        role_title = _admin_role_label(admin)
         await callback.message.edit_text(
-            f"مدیر: {admin.telegram_id}\nنقش پایه: {admin.role}\nوضعیت: {'فعال' if admin.is_active else 'غیرفعال'}\nمجوزها: {'اختصاصی' if allowed is not None else 'پیش‌فرض نقش'}",
+            f"👤 مدیر: {admin.telegram_id}\nسطح دسترسی: {role_title}\nوضعیت: {'فعال' if admin.is_active else 'غیرفعال'}\n"
+            f"مجوزها: {'تمام دسترسی‌ها' if admin.role == 'owner' else 'اختصاصی' if allowed is not None else 'پیش‌فرض نقش'}",
             reply_markup=_kb(rows),
         )
+
+
+@router.callback_query(F.data.startswith("admin:promote:"))
+async def admin_promote_confirm_start(callback: CallbackQuery) -> None:
+    if not await _answer_admin(callback, "admins"):
+        return
+    admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    async with AsyncSessionFactory() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
+            await callback.message.answer("این حساب قابل ارتقا نیست یا از قبل سوپرادمین است.")
+            return
+        telegram_id = admin.telegram_id
+    await callback.message.edit_text(
+        f"⚠️ ارتقای کاربر {telegram_id} به سوپرادمین کامل\n\nاین کار تمام دسترسی‌ها، از جمله مدیریت مدیران و کیف پول را به او می‌دهد. این دسترسی پس از راه‌اندازی مجدد ربات هم باقی می‌ماند.\n\nآیا ادامه می‌دهید؟",
+        reply_markup=_kb(
+            [
+                [("✅ بله، سوپرادمین شود", f"admin:promote-confirm:{admin_id}")],
+                [("لغو", f"admin:view:{admin_id}")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:promote-confirm:"))
+async def admin_promote_confirm(callback: CallbackQuery) -> None:
+    if not await _answer_admin(callback, "admins"):
+        return
+    admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    async with AsyncSessionFactory() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
+            await callback.message.answer("این حساب دیگر قابل ارتقا نیست.")
+            return
+        admin.role = "owner"
+        admin.is_active = True
+        admin.extra_data = {
+            key: value
+            for key, value in (admin.extra_data or {}).items()
+            if key not in {"permissions", "super_admin_source"}
+        }
+        admin.extra_data["super_admin_source"] = "database"
+        await _audit(
+            session,
+            callback.from_user.id,
+            "admin.super_admin_granted",
+            "admin",
+            admin.id,
+            {"telegram_id": admin.telegram_id, "source": "database"},
+        )
+        await session.commit()
+    await admin_view_render(callback, admin_id)
+
+
+@router.callback_query(F.data.startswith("admin:demote:"))
+async def admin_demote_confirm_start(callback: CallbackQuery) -> None:
+    if not await _answer_admin(callback, "admins"):
+        return
+    admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    async with AsyncSessionFactory() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if (
+            admin is None
+            or admin.telegram_id in _root_admins()
+            or admin.role != "owner"
+            or admin.telegram_id == callback.from_user.id
+        ):
+            await callback.message.answer(
+                "این سوپرادمین قابل تنزل نیست. برای جلوگیری از قفل‌شدن دسترسی، تنزل خودتان از این مسیر مجاز نیست."
+            )
+            return
+        telegram_id = admin.telegram_id
+    await callback.message.edit_text(
+        f"⚠️ تنزل سوپرادمین {telegram_id} به مدیر عملیات\n\nدسترسی کامل او حذف می‌شود و فقط مجوزهای پایه مدیر عملیات را خواهد داشت.\n\nتأیید می‌کنید؟",
+        reply_markup=_kb(
+            [
+                [("✅ تأیید تنزل دسترسی", f"admin:demote-confirm:{admin_id}")],
+                [("لغو", f"admin:view:{admin_id}")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:demote-confirm:"))
+async def admin_demote_confirm(callback: CallbackQuery) -> None:
+    if not await _answer_admin(callback, "admins"):
+        return
+    admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    async with AsyncSessionFactory() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if (
+            admin is None
+            or admin.telegram_id in _root_admins()
+            or admin.role != "owner"
+            or admin.telegram_id == callback.from_user.id
+        ):
+            await callback.message.answer("این عملیات مجاز نیست یا حساب دیگر سوپرادمین نیست.")
+            return
+        database_owners = set(
+            (
+                await session.scalars(
+                    select(AdminUser.telegram_id).where(
+                        AdminUser.role == "owner", AdminUser.is_active.is_(True)
+                    )
+                )
+            ).all()
+        )
+        remaining = set(_root_admins()) | (database_owners - {admin.telegram_id})
+        if not remaining:
+            await callback.message.answer("تنزل آخرین سوپرادمین مجاز نیست.")
+            return
+        target_id = admin.telegram_id
+        admin.role = "admin"
+        admin.is_active = True
+        admin.extra_data = {
+            key: value
+            for key, value in (admin.extra_data or {}).items()
+            if key not in {"permissions", "super_admin_source"}
+        }
+        await _audit(
+            session,
+            callback.from_user.id,
+            "admin.super_admin_revoked",
+            "admin",
+            admin.id,
+            {"telegram_id": target_id},
+        )
+        await session.commit()
+    await admin_view_render(callback, admin_id)
 
 
 @router.callback_query(F.data.startswith("admin:permscustom:"))
@@ -3215,7 +3837,7 @@ async def admin_permissions_custom(callback: CallbackQuery) -> None:
     admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     async with AsyncSessionFactory() as session:
         admin = await session.get(AdminUser, admin_id)
-        if admin is None or admin.telegram_id in _root_admins():
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
             await callback.message.answer("مدیر معتبر نیست.")
             return
         current = _role_default_permissions(admin.role)
@@ -3224,9 +3846,6 @@ async def admin_permissions_custom(callback: CallbackQuery) -> None:
             session, callback.from_user.id, "admin.permissions_customized", "admin", admin.id
         )
         await session.commit()
-    await callback.message.answer(
-        "دسترسی اختصاصی ساخته شد؛ حالا مجوزها را جداگانه روشن/خاموش کنید."
-    )
     await admin_view_render(callback, admin_id)
 
 
@@ -3239,39 +3858,6 @@ def _role_default_permissions(role: str) -> set[str]:
     return set(defaults.get(role, set()))
 
 
-async def admin_view_render(callback: CallbackQuery, admin_id: uuid.UUID) -> None:
-    async with AsyncSessionFactory() as session:
-        admin = await session.get(AdminUser, admin_id)
-        if admin is None:
-            return
-        allowed = set((admin.extra_data or {}).get("permissions", []))
-        labels = {
-            "panels": "پنل‌ها و سرویس‌ها",
-            "customers": "مشاهده کاربران",
-            "customer_write": "تغییر وضعیت کاربران",
-            "plans": "پلن‌ها",
-            "orders": "سفارش و پرداخت",
-            "settings": "تنظیمات فروش",
-            "stats": "آمار",
-            "wallet": "کیف پول",
-            "audit": "گزارش فعالیت مدیران",
-        }
-        rows = [
-            [(f"{'✅' if area in allowed else '⬜'} {label}", f"admin:perm:{admin.id}:{area}")]
-            for area, label in labels.items()
-        ]
-        rows.extend(
-            [
-                [("بازگشت به دسترسی پیش‌فرض نقش", f"admin:permreset:{admin.id}")],
-                [("↩️ بازگشت به مدیران", "adm:admins")],
-                [("🔴/🟢 تغییر وضعیت مدیر", f"admin:toggle:{admin.id}")],
-            ]
-        )
-        await callback.message.edit_text(
-            f"مجوزهای اختصاصی مدیر {admin.telegram_id}", reply_markup=_kb(rows)
-        )
-
-
 @router.callback_query(F.data.startswith("admin:permreset:"))
 async def admin_permissions_reset(callback: CallbackQuery) -> None:
     if not await _answer_admin(callback, "admins"):
@@ -3279,7 +3865,7 @@ async def admin_permissions_reset(callback: CallbackQuery) -> None:
     admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     async with AsyncSessionFactory() as session:
         admin = await session.get(AdminUser, admin_id)
-        if admin is None or admin.telegram_id in _root_admins():
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
             await callback.message.answer("مدیر معتبر نیست.")
             return
         admin.extra_data = {k: v for k, v in (admin.extra_data or {}).items() if k != "permissions"}
@@ -3299,7 +3885,7 @@ async def admin_permission_toggle(callback: CallbackQuery) -> None:
     admin_id = uuid.UUID(raw_id)
     async with AsyncSessionFactory() as session:
         admin = await session.get(AdminUser, admin_id)
-        if admin is None or admin.telegram_id in _root_admins():
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
             await callback.message.answer("مدیر معتبر نیست.")
             return
         permissions = (admin.extra_data or {}).get("permissions")
@@ -3329,7 +3915,7 @@ async def admin_add_start(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     await state.set_state(AdminAdd.telegram_id)
-    await callback.message.answer("Telegram numeric ID مدیر جدید را بفرستید:")
+    await _state_prompt(callback.message, state, "Telegram numeric ID مدیر جدید را بفرستید:")
 
 
 @router.message(AdminAdd.telegram_id)
@@ -3339,11 +3925,17 @@ async def admin_add_id(message: Message, state: FSMContext) -> None:
         return
     value = (message.text or "").strip()
     if not value.isdigit() or int(value) <= 0 or int(value) in _root_admins():
-        await message.answer("شناسه باید عدد مثبت باشد و نباید مالک اصلی باشد. دوباره بفرستید:")
+        await _state_prompt(
+            message,
+            state,
+            "شناسه باید عدد مثبت باشد و نباید مالک اصلی باشد. دوباره بفرستید:",
+        )
         return
     await state.update_data(telegram_id=int(value))
     await state.set_state(AdminAdd.role)
-    await message.answer(
+    await _state_prompt(
+        message,
+        state,
         "نقش مدیر را انتخاب کنید:",
         reply_markup=_kb(
             [
@@ -3377,8 +3969,19 @@ async def admin_add_role(callback: CallbackQuery, state: FSMContext) -> None:
                 )
             )
         else:
+            if admin.role == "owner":
+                await callback.message.answer(
+                    "این حساب سوپرادمین است. برای تنزل آن از دکمهٔ اختصاصی تنزل در صفحهٔ مدیر استفاده کنید."
+                )
+                await state.clear()
+                return
             admin.role = role
             admin.is_active = True
+            admin.extra_data = {
+                key: value
+                for key, value in (admin.extra_data or {}).items()
+                if key != "permissions"
+            }
         await _audit(
             session,
             callback.from_user.id,
@@ -3388,7 +3991,6 @@ async def admin_add_role(callback: CallbackQuery, state: FSMContext) -> None:
         )
         await session.commit()
     await state.clear()
-    await callback.message.answer("✅ دسترسی مدیر ثبت شد.")
     await _admin_admins_view(callback)
 
 
@@ -3399,8 +4001,32 @@ async def admin_toggle(callback: CallbackQuery) -> None:
     admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     async with AsyncSessionFactory() as session:
         admin = await session.get(AdminUser, admin_id)
-        if admin is None or admin.telegram_id in _root_admins():
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
             await callback.message.answer("این مدیر قابل غیرفعال‌سازی نیست.")
+            return
+        action = "فعال‌سازی" if not admin.is_active else "غیرفعال‌سازی"
+        target_active = not admin.is_active
+        telegram_id = admin.telegram_id
+    await callback.message.edit_text(
+        f"⚠️ {action} مدیر {telegram_id}\n\nبا این کار دسترسی مدیریتی این حساب {'برقرار' if target_active else 'قطع'} می‌شود.\nآیا تأیید می‌کنید؟",
+        reply_markup=_kb(
+            [
+                [(f"✅ تأیید {action}", f"admin:toggle-confirm:{admin_id}")],
+                [("لغو", f"admin:view:{admin_id}")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:toggle-confirm:"))
+async def admin_toggle_confirm(callback: CallbackQuery) -> None:
+    if not await _answer_admin(callback, "admins"):
+        return
+    admin_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    async with AsyncSessionFactory() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if admin is None or admin.telegram_id in _root_admins() or admin.role == "owner":
+            await callback.message.answer("این مدیر قابل تغییر وضعیت نیست.")
             return
         admin.is_active = not admin.is_active
         await _audit(
@@ -3412,8 +4038,7 @@ async def admin_toggle(callback: CallbackQuery) -> None:
             {"active": admin.is_active},
         )
         await session.commit()
-    await callback.message.answer("وضعیت مدیر تغییر کرد.")
-    await _admin_admins_view(callback)
+    await admin_view_render(callback, admin_id)
 
 
 @router.callback_query(F.data == "adm:settings")
@@ -3439,8 +4064,10 @@ async def settings_payment_start(callback: CallbackQuery, state: FSMContext) -> 
         return
     await state.clear()
     await state.set_state(StoreSettings.payment_instructions)
-    await callback.message.answer(
-        "متن کامل روش پرداخت را ارسال کنید (شماره کارت/شبا، نام صاحب حساب و توضیحات):"
+    await _state_prompt(
+        callback.message,
+        state,
+        "متن کامل روش پرداخت را ارسال کنید (شماره کارت/شبا، نام صاحب حساب و توضیحات):",
     )
 
 
@@ -3451,7 +4078,7 @@ async def settings_payment_save(message: Message, state: FSMContext) -> None:
         return
     text = (message.text or "").strip()
     if len(text) < 8:
-        await message.answer("متن خیلی کوتاه است؛ دوباره ارسال کنید:")
+        await _state_prompt(message, state, "متن خیلی کوتاه است؛ دوباره ارسال کنید:")
         return
     async with AsyncSessionFactory() as session:
         await _set_setting(session, "payment_instructions", text[:3000])
@@ -3532,21 +4159,21 @@ async def shop_plans(callback: CallbackQuery) -> None:
         ).all()
     rows = []
     for plan in plans:
-        gb = (
-            "نامحدود"
-            if not plan.traffic_limit_bytes
-            else f"{plan.traffic_limit_bytes / 1024**3:.0f} GB"
-        )
         rows.append(
             [
                 (
-                    f"{plan.name} · {plan.duration_days} روز · {gb} · {_price(Decimal(plan.price), plan.currency)}",
+                    f"📦 {plan.name[:32]} · {_price(Decimal(plan.price), plan.currency)}",
                     f"shop:plan:{plan.id}",
                 )
             ]
         )
     rows.append([("↩️ منوی اصلی", "home")])
-    await callback.message.edit_text("🛍 پلن‌های فعال فروشگاه", reply_markup=_kb(rows))
+    body = (
+        "🛍 پلن‌های فعال فروشگاه\n\nبرای مشاهده جزئیات و انتخاب روش پرداخت، یک پلن را انتخاب کنید."
+        if plans
+        else "🛍 در حال حاضر پلن فعالی برای فروش وجود ندارد. لطفاً بعداً دوباره بررسی کنید."
+    )
+    await callback.message.edit_text(body, reply_markup=_kb(rows))
 
 
 @router.callback_query(F.data.startswith("shop:plan:"))
@@ -3569,8 +4196,9 @@ async def shop_plan(callback: CallbackQuery) -> None:
         if service.protocol in {"wg-c", "awg", "gre"}
         else ""
     )
+    description = f"\nتوضیحات: {plan.description[:400]}" if plan.description else ""
     await callback.message.edit_text(
-        f"📦 {plan.name}\nسرویس: {service.name} ({service.protocol})\nمدت: {plan.duration_days} روز\nحجم: {traffic}\nحداکثر IP هم‌زمان (limitIp): {plan.device_limit or 'نامحدود'}\nقیمت: {_price(Decimal(plan.price), plan.currency)}{device_note}",
+        f"📦 جزئیات پلن: {plan.name}\n\n🌐 سرویس: {service.name}\n🔐 پروتکل: {service.protocol.upper()}\n⏳ مدت اعتبار: {plan.duration_days} روز\n📊 حجم: {traffic}\n📱 حداکثر IP هم‌زمان: {plan.device_limit or 'نامحدود'}\n💰 قیمت نهایی: {_price(Decimal(plan.price), plan.currency)}{description}{device_note}\n\nروش پرداخت را انتخاب کنید:",
         reply_markup=_kb(
             [
                 [("💳 پرداخت کارت‌به‌کارت", f"shop:buy:{plan.id}")],
@@ -3609,8 +4237,18 @@ async def _start_manual_payment(
             order.extra_data = {**(order.extra_data or {}), "renewal": True}
         await session.commit()
     await message.answer(
-        f"🧾 سفارش شما ثبت شد.\nکد سفارش:\n`{order.id}`\nمبلغ: {_price(Decimal(order.amount), order.currency)}\n\n{instructions}\n\nپس از واریز، تصویر رسید را به‌صورت عکس و کد سفارش کامل را در Caption ارسال کنید. تا زمان تأیید مدیر، سرویس فعال نمی‌شود.",
-        parse_mode="Markdown",
+        f"🧾 سفارش شما ثبت شد.\n\nمبلغ: {_price(Decimal(order.amount), order.currency)}\n\n{instructions}\n\nپس از واریز، تصویر رسید را به‌صورت عکس ارسال کنید و کد کامل سفارش را در Caption قرار دهید. تا زمان تأیید مدیر، سرویس فعال نمی‌شود.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 کپی کد سفارش",
+                        copy_text=CopyTextButton(text=str(order.id)),
+                    )
+                ],
+                [InlineKeyboardButton(text="👤 مشخصات من", callback_data="shop:profile")],
+            ]
+        ),
     )
 
 
@@ -3638,6 +4276,7 @@ async def shop_wallet_buy(callback: CallbackQuery, bot: Bot) -> None:
     if callback.from_user is None:
         return
     plan_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
+    status_message = await callback.message.answer("⏳ در حال بررسی موجودی و ثبت خرید شما...")
     try:
         async with AsyncSessionFactory() as session:
             customer = await get_or_create_customer(session, callback.from_user)
@@ -3667,6 +4306,13 @@ async def shop_wallet_buy(callback: CallbackQuery, bot: Bot) -> None:
                 reference=str(order.id),
             )
             await session.commit()
+            await _edit_or_answer(
+                status_message, "⚙️ پرداخت ثبت شد؛ در حال ساخت سرویس و آماده‌سازی کانفیگ..."
+            )
+            try:
+                await bot.send_chat_action(callback.from_user.id, ChatAction.TYPING)
+            except TelegramAPIError:
+                pass
             try:
                 subscription = await fulfill_subscription_order(session, order)
             except Exception:
@@ -3684,19 +4330,33 @@ async def shop_wallet_buy(callback: CallbackQuery, bot: Bot) -> None:
                 raise
             try:
                 delivery = await _store_subscription_delivery(session, subscription)
-                await callback.message.answer(delivery[0])
-                await _send_subscription_files(bot, callback.from_user.id, delivery[2])
+                delivered = await _send_subscription_delivery(
+                    bot,
+                    callback.from_user.id,
+                    delivery,
+                    status_message=status_message,
+                )
+                if not delivered:
+                    await _edit_or_answer(
+                        status_message,
+                        "✅ سرویس ساخته شد، اما ارسال همه فایل‌ها کامل نشد. از بخش «اشتراک‌های من» دوباره کانفیگ را دریافت کنید.",
+                        reply_markup=_kb([[("📦 اشتراک‌های من", "shop:subs")]]),
+                    )
             except (ValueError, KeyError, TypeError) as exc:
                 logger.exception("Wallet purchase provisioned but delivery message failed")
-                await callback.message.answer(
-                    f"سرویس فعال شد، اما نمایش لینک اشتراک خطا داشت ({type(exc).__name__}). از بخش اشتراک‌های من آن را دریافت کنید."
+                await _edit_or_answer(
+                    status_message,
+                    f"✅ سرویس فعال شد، اما ساخت پیام تحویل خطا داشت ({type(exc).__name__}). از بخش اشتراک‌های من آن را دریافت کنید.",
+                    reply_markup=_kb([[("📦 اشتراک‌های من", "shop:subs")]]),
                 )
     except ValueError as exc:
-        await callback.message.answer(f"❌ {exc!s}")
+        await _edit_or_answer(status_message, f"❌ خرید انجام نشد: {exc!s}")
     except Exception as exc:
         logger.exception("Wallet purchase failed")
-        await callback.message.answer(
-            f"❌ خرید انجام نشد؛ اگر مبلغی کسر شده باشد به کیف پول برگشته است. ({type(exc).__name__})"
+        await _edit_or_answer(
+            status_message,
+            f"❌ خرید کامل نشد ({type(exc).__name__}). موجودی کیف پول را در «مشخصات من» بررسی کنید؛ در صورت کسر وجه و عدم فعال‌شدن سرویس، با پشتیبانی تماس بگیرید.",
+            reply_markup=_kb([[("👤 مشخصات من", "shop:profile")]]),
         )
 
 
@@ -3723,7 +4383,7 @@ async def shop_topup_start(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.clear()
     await state.set_state(WalletTopup.amount)
-    await callback.message.answer("مبلغ شارژ به ریال را وارد کنید (حداقل 10,000):")
+    await _state_prompt(callback.message, state, "مبلغ شارژ به ریال را وارد کنید (حداقل 10,000):")
 
 
 @router.message(WalletTopup.amount)
@@ -3733,7 +4393,7 @@ async def shop_topup_amount(message: Message, state: FSMContext) -> None:
         if amount < 10000 or amount > Decimal(1000000000000):
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer("مبلغ معتبر وارد کنید؛ حداقل 10,000 ریال:")
+        await _state_prompt(message, state, "مبلغ معتبر وارد کنید؛ حداقل 10,000 ریال:")
         return
     async with AsyncSessionFactory() as session:
         customer = await get_or_create_customer(session, message.from_user)
@@ -3760,8 +4420,18 @@ async def shop_topup_amount(message: Message, state: FSMContext) -> None:
         await session.commit()
     await state.clear()
     await message.answer(
-        f"درخواست شارژ ثبت شد.\nکد سفارش: `{order.id}`\nمبلغ: {_price(amount, 'IRR')}\n\n{instructions}\n\nرسید را به‌صورت عکس با کد سفارش کامل در Caption ارسال کنید.",
-        parse_mode="Markdown",
+        f"درخواست شارژ ثبت شد.\nمبلغ: {_price(amount, 'IRR')}\n\n{instructions}\n\nرسید را به‌صورت عکس ارسال کنید و کد کامل سفارش را در Caption قرار دهید.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 کپی کد سفارش",
+                        copy_text=CopyTextButton(text=str(order.id)),
+                    )
+                ],
+                [InlineKeyboardButton(text="👤 مشخصات من", callback_data="shop:profile")],
+            ]
+        ),
     )
 
 
@@ -3876,9 +4546,13 @@ async def shop_subscription_detail(callback: CallbackQuery) -> None:
     rows.append([("↩️ بازگشت", "shop:subs")])
     await callback.message.edit_text(
         f"اشتراک: {subscription.id}\nسرویس: {service.name if service else '-'}\nوضعیت: {subscription.status}\nاعتبار: {subscription.expires_at}\n\n{payload_text}",
-        reply_markup=_kb(rows),
+        reply_markup=_subscription_delivery_keyboard(delivery[1]),
     )
-    await _send_subscription_files(callback.bot, callback.from_user.id, delivery[2])
+    files_sent = await _send_subscription_files(callback.bot, callback.from_user.id, delivery[2])
+    if not files_sent:
+        await callback.message.answer(
+            "⚠️ پیام مشخصات نمایش داده شد، اما ارسال بعضی فایل‌های کانفیگ ناموفق بود. لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید."
+        )
 
 
 @router.callback_query(F.data.startswith("shop:renew:"))
@@ -3950,13 +4624,14 @@ async def bootstrap_admins() -> None:
             await session.scalars(select(AdminUser).where(AdminUser.role == "owner"))
         ).all()
         for previous in previous_owners:
-            if previous.telegram_id not in ids:
+            source = (previous.extra_data or {}).get("super_admin_source")
+            if previous.telegram_id not in ids and source != "database":
                 previous.role = "admin"
                 previous.is_active = False
                 previous.extra_data = {
                     key: value
                     for key, value in (previous.extra_data or {}).items()
-                    if key != "permissions"
+                    if key not in {"permissions", "super_admin_source"}
                 }
                 await _audit(
                     session,
@@ -3971,10 +4646,23 @@ async def bootstrap_admins() -> None:
                 select(AdminUser).where(AdminUser.telegram_id == telegram_id)
             )
             if admin is None:
-                session.add(AdminUser(telegram_id=telegram_id, role="owner", is_active=True))
+                session.add(
+                    AdminUser(
+                        telegram_id=telegram_id,
+                        role="owner",
+                        is_active=True,
+                        extra_data={"super_admin_source": "environment"},
+                    )
+                )
             else:
                 admin.role = "owner"
                 admin.is_active = True
+                admin.extra_data = {
+                    key: value
+                    for key, value in (admin.extra_data or {}).items()
+                    if key != "permissions"
+                }
+                admin.extra_data["super_admin_source"] = "environment"
         await session.commit()
 
 
