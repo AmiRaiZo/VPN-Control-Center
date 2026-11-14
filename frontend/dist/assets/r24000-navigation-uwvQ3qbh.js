@@ -1,0 +1,1 @@
+function e(e,t={}){if(typeof window>`u`)return;if(typeof e==`number`){window.history.go(e);return}let n=typeof e==`string`?e:`${(e==null?void 0:e.pathname)||`/`}${(e==null?void 0:e.search)||``}${(e==null?void 0:e.hash)||``}`;t!=null&&t.replace?window.location.replace(n):window.location.assign(n)}function t(){return e}export{t};

@@ -1,0 +1,23 @@
+[Unit]
+Description=VPN Control Center Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@APP_DIR@/.env
+ExecStart=@APP_DIR@/.venv/bin/python -m vpn_manager.bot
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@APP_DIR@/var @APP_DIR@/backups -@APP_DIR@/vpn_manager.db -@APP_DIR@/vpn_manager.db-wal -@APP_DIR@/vpn_manager.db-shm
+
+[Install]
+WantedBy=multi-user.target

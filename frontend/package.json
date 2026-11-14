@@ -1,0 +1,26 @@
+{
+  "name": "vpn-panel-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "7.18.1",
+    "recharts": "^3.10.1",
+    "axios": "^1.7.2",
+    "jalaali-js": "^1.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.4",
+    "vite": "^8.1.5",
+    "tailwindcss": "^3.4.4",
+    "postcss": "^8.4.39",
+    "autoprefixer": "^10.4.19"
+  }
+}
