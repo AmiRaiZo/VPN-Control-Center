@@ -5,42 +5,59 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install bot and backend test dependencies
+
+      - name: Create isolated Bot and Backend environments
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e "bot[dev]"
-          python -m pip install -r backend/requirements.txt pytest
-      - name: Lint bot
-        run: ruff check bot/src bot/tests bot/alembic
-      - name: Test bot
-        run: pytest -q bot/tests
-      - name: Test backend
-        run: pytest -q backend/tests
+          set -Eeuo pipefail
+          python -m venv .ci-venv-bot
+          python -m venv .ci-venv-backend
+          .ci-venv-bot/bin/python -m pip install --upgrade pip
+          .ci-venv-bot/bin/python -m pip install -e "bot[dev]"
+          .ci-venv-backend/bin/python -m pip install --upgrade pip
+          .ci-venv-backend/bin/python -m pip install -r backend/requirements.txt pytest pytest-asyncio httpx
+
+      - name: Lint Bot
+        run: .ci-venv-bot/bin/ruff check bot/src bot/tests bot/alembic
+
+      - name: Test Bot
+        run: .ci-venv-bot/bin/pytest -q bot/tests
+
+      - name: Test Backend
+        env:
+          PYTHONPATH: backend
+        run: .ci-venv-backend/bin/pytest -q backend/tests
+
       - name: Compile Python sources
         run: python -m compileall -q bot/src bot/tests bot/alembic backend/app backend/tests
+
       - name: Installer integration checks
         run: bash bot/tests/test_installer_integration.sh
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Build frontend
+
+      - name: Build Frontend
         working-directory: frontend
         run: |
           npm ci
