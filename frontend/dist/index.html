@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fa" dir="rtl" translate="no" class="notranslate">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="google" content="notranslate" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="vpn-panel-ui-version" content="2.4.0" />
+    <meta name="theme-color" content="#090b0f" />
+    <meta name="application-name" content="VPN Panel" />
+    <meta name="apple-mobile-web-app-title" content="VPN Panel" />
+    <link id="vpnpanel-favicon" rel="icon" href="/favicon.svg" />
+    <link id="vpnpanel-shortcut-icon" rel="shortcut icon" href="/favicon.svg" />
+    <link id="vpnpanel-apple-touch-icon" rel="apple-touch-icon" href="/favicon.svg" />
+    <title>پنل مدیریت VPN</title>
+    <script>
+      (function () {
+        try {
+          var language = localStorage.getItem('vpnpanel_dashboard_lang') === 'en' ? 'en' : 'fa';
+          document.documentElement.lang = language;
+          document.documentElement.dir = language === 'en' ? 'ltr' : 'rtl';
+        } catch (e) {
+          document.documentElement.lang = 'fa';
+          document.documentElement.dir = 'rtl';
+        }
+        try {
+          var lowPower = window.matchMedia('(max-width: 767px), (pointer: coarse), (prefers-reduced-motion: reduce)').matches
+            || (navigator.connection && navigator.connection.saveData === true)
+            || Number(navigator.deviceMemory || 8) <= 4
+            || Number(navigator.hardwareConcurrency || 8) <= 4;
+          document.documentElement.dataset.performance = lowPower ? 'lite' : 'full';
+        } catch (e) {
+          document.documentElement.dataset.performance = 'full';
+        }
+        try {
+          var KEY = 'vpnpanel_theme';
+          var stored = localStorage.getItem(KEY);
+          var theme = (stored === 'light' || stored === 'dark' || stored === 'system') ? stored : 'dark';
+          var resolved = theme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : theme;
+          document.documentElement.classList.add(resolved);
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/login-hero-background-v23243.css">
+    <link rel="stylesheet" href="/login-wave-v23243.css">
+    <link rel="stylesheet" href="/login-polish-v23243.css">
+    <script type="module" crossorigin src="/assets/index-v24000.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/r24000-jsx-runtime-CdvZGgm7.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-v24000.css">
+  </head>
+  <body class="bg-bg text-ink notranslate" translate="no">
+    <div id="root" class="notranslate" translate="no" data-translate="no"></div>
+
+    <script>
+      (function () {
+        var RETRY_PARAM = '__ui_retry';
+        window.__VP_PANEL_BOOT_OK__ = false;
+        window.__VP_PANEL_ENTRY_LOADED__ = false;
+
+        function escapeHtml(value) {
+          return String(value || '').replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; });
+        }
+        function freshReload() {
+          var url = new URL(window.location.href);
+          url.searchParams.set(RETRY_PARAM, '24000-' + Date.now());
+          window.location.replace(url.toString());
+        }
+        function showRecovery(error) {
+          if (document.getElementById('vpnpanel-recovery-overlay')) return;
+          var message = error && (error.message || String(error)) || 'The frontend entry file could not be loaded.';
+          var overlay = document.createElement('div');
+          overlay.id = 'vpnpanel-recovery-overlay';
+          overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#050608;color:#f5f7fa;display:grid;place-items:center;padding:24px;font-family:Noto Sans Arabic,Segoe UI,sans-serif';
+          overlay.innerHTML = '<main dir="rtl" style="width:min(580px,100%)">' +
+            '<section style="border:1px solid #2a2f38;border-radius:18px;background:#0d1015;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
+            '<h1 style="margin:0;font-size:20px">رابط پنل بارگذاری نشد</h1>' +
+            '<p style="margin:12px 0 0;color:#aeb6c2;line-height:1.9;font-size:14px">صفحه سیاه مخفی نمی‌شود؛ خطای دریافت یا اجرای رابط در همین صفحه نمایش داده شده است. بارگذاری امن را بزنید.</p>' +
+            '<button id="vpnpanel-hard-reload" style="width:100%;margin-top:18px;border:0;border-radius:12px;background:#ff6a00;color:#fff;padding:12px 16px;font-weight:800;cursor:pointer">بارگذاری امن رابط</button>' +
+            '<pre style="margin-top:14px;color:#7f8996;font-size:11px;direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere">' + escapeHtml(message) + '</pre></section></main>';
+          document.body.appendChild(overlay);
+          var button = document.getElementById('vpnpanel-hard-reload');
+          if (button) button.onclick = freshReload;
+        }
+        window.__vpnpanelFrontendFailed = function (error) {
+          // Keep the real error visible. A reload must be an explicit user action,
+          // never an automatic loop that repeatedly refreshes a broken route.
+          showRecovery(error);
+        };
+        window.addEventListener('vite:preloadError', function (event) {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          window.__vpnpanelFrontendFailed(event && event.payload ? event.payload : 'A frontend asset could not be loaded.');
+        });
+        window.addEventListener('error', function (event) {
+          if (window.__VP_PANEL_BOOT_OK__) return;
+          var target = event && event.target;
+          if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK')) {
+            window.__vpnpanelFrontendFailed('Frontend asset failed: ' + (target.src || target.href || 'unknown'));
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function (event) {
+          if (!window.__VP_PANEL_BOOT_OK__) window.__vpnpanelFrontendFailed(event && event.reason ? event.reason : 'Frontend startup promise failed.');
+        });
+        window.setTimeout(function () {
+          if (!window.__VP_PANEL_BOOT_OK__) {
+            var stage = window.__VP_PANEL_ENTRY_LOADED__ ? 'Frontend entry loaded but React did not finish mounting.' : 'Frontend entry did not load.';
+            window.__vpnpanelFrontendFailed(stage);
+          }
+        }, 12000);
+      })();
+    </script>
+
+</body>
+</html>

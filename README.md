@@ -1,64 +1,358 @@
-# VPN Control Center 1.1.8
+# پنل مدیریت VPN (L2TP/IPsec + PPTP + OpenVPN + SSTP + IKEv2 + OpenConnect)
 
-Telegram-based administration and sales control plane for one or more `vpn-ui` instances from [Sir-MmD/vpn-ui](https://github.com/Sir-MmD/vpn-ui).
+پنل تحت وب برای مدیریت کاربران VPN روی سرور اوبونتو، با بک‌اند FastAPI + MySQL
+و فرانت‌اند React، به همراه اسکریپت نصب یکپارچه.
 
-> **Development status — not approved for live commercial use.** Automated tests and mocked panel requests do not replace live Telegram/panel integration, production security review, recovery drills, or real payment verification. The current checkout flow is manual bank transfer with human review; no online payment gateway is implemented.
+## امکانات نسخه فعلی
+- مدیریت کامل کاربران: ایجاد / ویرایش / حذف
+- ساخت لایسنس داخلی برای ادمین زیرمجموعه یا ادمین اصلی (سوپرادمین)، با اعتبار زمانی و ثبت‌نام یک‌بارمصرف از صفحه ورود
+- تعیین حجم مصرفی (GB)، وضعیت فعال/غیرفعال، تعداد دستگاه مجاز
+- تاریخ انقضا به دو شکل: **تاریخ ثابت** یا **N روز بعد از اولین اتصال کاربر** (شمارش تا وصل نشدن کاربر شروع نمی‌شود)
+- فعال/غیرفعال‌سازی هر پروتکل به‌صورت جداگانه برای هر کاربر (L2TP/IPsec، PPTP، OpenVPN، SSTP، IKEv2 و OpenConnect)
+- **مرکز پروتکل‌ها**: کارت مستقل برای هر سرویس با وضعیت نصب/اجرا، نسخه، backend، listenerها، شروع/توقف/ری‌استارت، مشاهده و دانلود لاگ، نصب/ترمیم با ترمینال زنده، تنظیمات ساده و ویرایش پیشرفته‌ی فایل‌های مجاز با بکاپ و rollback خودکار
+- **مدیریت متمرکز Nodeها در مرکز پروتکل‌ها**: انتخاب سرور اصلی یا هر Node و اجرای تمام عملیات وضعیت، لاگ، نصب، ری‌استارت و تنظیمات همان سرور بدون خروج از پنل اصلی
+- **تخصیص کاربر به سرورها**: انتخاب سرور اصلی، یک یا چند Node یا انتخاب همه هنگام ساخت/ویرایش کاربر؛ کانفیگ و Subscription فقط برای سرورهای انتخاب‌شده ساخته می‌شود
+- **SSTP**: زیرساختش (accel-ppp) به‌صورت خودکار توسط `install/install.sh` و `install/update.sh` نصب/بررسی می‌شود (اسکریپت جدای `install/setup_sstp.sh` هم برای نصب/تلاش مجدد دستی موجود است)؛ بعد از آن مثل بقیه‌ی پروتکل‌ها از داخل پنل (روشن/خاموش/ری‌استارت، پورت، فعال/غیرفعال به ازای هر کاربر) قابل مدیریت است. اگر کامپایل آن روی سرور شکست بخورد (مثلاً به‌خاطر قطعی شبکه)، نصب/آپدیت پنل متوقف نمی‌شود و SSTP فقط غیرفعال می‌ماند - در پایان لاگ نصب/آپدیت وضعیتش گزارش می‌شود و می‌توانید با `sudo bash install/setup_sstp.sh` دوباره تلاش کنید
+- تنظیم DNS اختصاصی OpenVPN و OpenConnect از داخل ویرایش همان کارت؛ تغییرات فقط همان سرویس را اعمال می‌کند و سرویس‌های نامرتبط ری‌استارت نمی‌شوند
+- انتقال یک‌کلیکی پنل HTTPS از پورت 443 به پورت دلخواه و سپس انتقال OpenConnect به TCP/UDP 443، همراه بررسی تداخل پورت و rollback در صورت خطا
+- محاسبه‌ی زنده‌ی مصرف OpenConnect در حین اتصال (نمونه‌برداری چندثانیه‌ای از شمارنده‌ی اینترفیس)، نه فقط هنگام قطع؛ محدودیت حجم نیز بر همان داده‌ی زنده اعمال می‌شود
+- کارت «System / Provisioning» داخل مرکز پروتکل‌ها برای مشاهده‌ی IP forwarding، فایروال، iproute2 و ماژول‌های کرنل و اجرای مجدد آماده‌سازی زیرساخت
+- داشبورد زنده: CPU، RAM، Disk، نمودار پهنای باند؛ نمودار روی دسکتاپ حتی در حالت سبک نمایش داده می‌شود و وضعیت پروتکل‌ها از Node انتخاب‌شده خوانده می‌شود
+- نمایش کاربران آنلاین به تفکیک پروتکل و IP
+- نمایش میزان مصرف هر کاربر و قطع خودکار در اتمام حجم یا انقضا
+- REST API کامل (FastAPI) با احراز هویت JWT
+- نصب کامل با یک اسکریپت روی Ubuntu 20.04/22.04/24.04 (پرسش‌های تعاملی نصب به انگلیسی است)
+- اجرای پایدار پشت Nginx + systemd
+- تنظیم دامنه اختصاصی و دریافت خودکار SSL رایگان (Let's Encrypt) از داخل پنل (منوی «تنظیمات»)، همراه بررسی خودکار رکورد DNS پیش از تلاش برای گرفتن گواهی
+- **دامنه‌ی جدا و اختصاصی برای خودِ پروتکل‌ها** (L2TP/PPTP/OpenVPN)، کاملاً مستقل از دامنه‌ی پنل — چون اگر دامنه‌ی پنل پشت CDN/پروکسی مثل Cloudflare (ابر نارنجی) باشد، پروتکل‌های VPN روی آن اصلاً وصل نمی‌شوند
+- دانلود کانفیگ OpenVPN اختصاصی هر کاربر مستقیماً از صفحه‌ی «مدیریت کاربران»
+- ویرایش یوزرنیم/پسورد ادمین و پورت پنل، هم از داخل پنل و هم از طریق SSH
 
-## Current capabilities
+## تغییرات مهم نسخه 2.1.0
+- مرکز مدیریت کامل پروتکل‌ها با لاگ، ویرایش، نصب/ترمیم و کنسول زنده
+- DNS قابل تنظیم برای OpenVPN و OpenConnect
+- آزادسازی امن پورت 443 پنل برای OpenConnect
+- ثبت زنده‌ی مصرف OpenConnect و اعمال محدودیت حجم هنگام اتصال
+- نصب مستقل هر سرویس، NAT/MASQUERADE کامل‌تر، حفظ اولویت زنجیره‌ی بن IP و سازگاری بهتر با نام‌های مختلف سرویس strongSwan
 
-- Multi-panel credentials encrypted at rest, Base Path support, connection test, 2FA/TOTP login and inbound synchronization.
-- Basic inbound create, rename, port/status update and confirmed deletion.
-- Managed inbound-client synchronization, status toggle, delete and basic traffic/expiry/IP-limit editing where the protocol identity is supported. Protocol-native config files are delivered for OpenVPN, WireGuard-C, AmneziaWG, GRE and SSH using the documented panel endpoints.
-- Core status/install and Xray VPN Outbound management; outbound settings currently require administrator-supplied JSON.
-- Customer search/status, plan catalog and editing, orders, manual receipt review, wallet and subscription purchase/renewal/retry.
-- `owner`, `admin`, `finance`, and `support` roles, encrypted client payloads, append-style wallet ledger with idempotency keys, and audit events for selected administrative/financial operations.
-- Persian customer profile with one-tap numeric Telegram ID copy, wallet balance, complete paginated order history and active subscriptions; history callbacks are scoped to the requesting Telegram account.
-- Persistent database-backed Super Admin promotion/demotion with audit records, paginated administrator list, confirmation before enabling/disabling an administrator, and automatic cleanup of transient form prompts.
-- Grouped protocol configuration delivery with individual-document fallback, explicit partial-delivery reporting and a lightweight animated delivery indicator with text fallback.
-
-See [README_FA.md](README_FA.md) for the Persian setup and operator guide and [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for the acceptance ledger.
-
-## Local setup
+## آپدیت روی سرور از قبل نصب‌شده
+اگر پنل را قبلاً نصب کرده‌اید و فقط می‌خواهید نسخه‌ی جدید کد (این پکیج) را جایگزین کنید،
+نیازی به اجرای دوباره‌ی `install.sh` نیست — آن اسکریپت یک نصب کاملاً تازه انجام می‌دهد
+و دیتابیس/رمزها/کاربران فعلی شما را از بین می‌برد. به‌جایش از `update.sh` استفاده کنید که
+کد را جایگزین می‌کند و دیتابیس، گواهی SSL، PSK و تنظیمات ذخیره‌شده را حفظ می‌کند.
+در نسخه 2.3.132 تنظیمات L2TP/PPTP/SSTP به‌صورت هدفمند ترمیم می‌شوند و
+بن IP یا قطع اینترنتی که از پنل اصلی ثبت/حذف شود، فوراً به همه Nodeهای فعال
+ارسال می‌شود؛ سایر پروتکل‌ها بازنویسی نمی‌شوند:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-cp .env.example .env
+# پوشه‌ی vpn-panel جدید را روی سرور آپلود کنید (کنار نسخه‌ی قبلی)، سپس:
+cd vpn-panel/install
+sudo bash update.sh
 ```
 
-Configure `APP_SECRET_KEY`, `DATABASE_URL`, `BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, and `PANEL_CREDENTIAL_ENCRYPTION_KEY`. Run `alembic upgrade head`, then start the Telegram polling process with `python -m vpn_manager.bot`.
+ستون‌های جدید پایگاه‌داده (برای حالت «انقضا بعد از اولین اتصال») خودکار هنگام استارت
+بک‌اند اضافه می‌شوند (نیازی به دستور SQL دستی نیست). این اسکریپت پورت 80 را هم برای
+گرفتن SSL همیشه باز نگه می‌دارد.
 
-## One-line Ubuntu installer
+## پیش‌نیاز
+یک سرور **Ubuntu** (نه ویندوز) با دسترسی root. توضیح در پایین درباره‌ی ویندوز آمده.
 
-On Ubuntu 24.04 LTS, Ubuntu 26.04 (Resolute), and Ubuntu releases whose default Python is in the supported range, from an interactive terminal:
-
+## نصب
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AmiRaiZo/VPN-Control-Center/main/install.sh | sudo bash
+# آپلود پوشه vpn-panel به سرور (مثلا با scp یا git)
+cd vpn-panel/install
+export LICENSE_SERVER_URL="https://license.example.com"
+read -rsp "License API key: " LICENSE_API_KEY; echo
+export LICENSE_API_KEY
+sudo --preserve-env=LICENSE_SERVER_URL,LICENSE_API_KEY bash install.sh
+unset LICENSE_API_KEY
+```
+اسکریپت از شما می‌پرسد: آی‌پی سرور، پورت پنل (پیش‌فرض 80)، نام کاربری/رمز ادمین.
+در پایان، آدرس پنل، PSK اشتراکی L2TP، و مسیر پروفایل نمونه OpenVPN را چاپ می‌کند.
+
+## لایسنس (فروش این پنل به مشتریان دیگر)
+این پنل می‌تواند به یک سرور لایسنس مرکزی (پروژه‌ی جداگانه‌ی `license-server`،
+که خودت روی یک سرور دیگر - متعلق به خودت، نه مشتری - بالا می‌آوری) وصل شود.
+وقتی این قابلیت فعال باشد:
+- پنل هر چند دقیقه یک‌بار کد لایسنسِ واردشده را از سرور مرکزی چک می‌کند.
+- اگر لایسنس منقضی/نامعتبر باشد، هم پنل تحت وب قفل می‌شود (فقط صفحه‌ی
+  وارد کردن کد لایسنس در دسترس است) و هم خودِ سرویس‌های VPN
+  (L2TP/PPTP/OpenVPN/SSTP/IKEv2/OpenConnect) خاموش می‌شوند - یعنی کاربران نهایی هم دیگر
+  نمی‌توانند وصل شوند.
+- به‌محض وارد کردن یک کد معتبر، همه‌چیز خودکار به حالت قبلی برمی‌گردد.
+- قطعی موقتِ خودِ سرور لایسنس (نه انقضای واقعی) بلافاصله پنل را قفل نمی‌کند
+  (grace period، پیش‌فرض ۷۲ ساعت - قابل تغییر با `LICENSE_GRACE_PERIOD_HOURS`).
+
+### راه‌اندازی (یک‌بار، قبل از توزیع نصب‌کننده به مشتری‌ها)
+1. پروژه‌ی `license-server` را روی یک سرور جدا (متعلق به خودت) نصب و اجرا کن
+   (نگاه کن به `license-server/README.md`).
+2. وارد پنل ادمین آن شو، از تب **API keys** یک کلید جدید بساز (مثلاً با نام
+   «VPN Panel installer»).
+3. مقادیر `LICENSE_SERVER_URL` و `LICENSE_API_KEY` را از bootstrap محافظت‌شده
+   به‌صورت متغیر محیطی به نصب‌کننده بده؛ کلید API را داخل ZIP یا خود
+   `install.sh` قرار نده.
+4. حالا هر مشتری که `install.sh` را اجرا کند، از او یک کد لایسنس پرسیده
+   می‌شود (اختیاری - می‌تواند بعداً هم از داخل پنل وارد کند). کد لایسنس
+   واقعی (نه API key) را از تب **Licenses** همان License Console برایش
+   بساز و به او بده.
+
+نصب production بدون URL و API key متوقف می‌شود. فقط برای توسعهٔ محلی می‌توان
+با `VPN_PANEL_ALLOW_UNLICENSED_INSTALL=1` حالت بدون لایسنس را صریحاً فعال کرد.
+
+## معماری
+```
+frontend (React+Vite) -> ساخته و توسط Nginx سرو می‌شود
+Nginx -> پروکسی /api/* به سمت backend (127.0.0.1:8000)
+backend (FastAPI, systemd service: vpn-panel-api) -> MySQL
+bot (vpn-manager-bot, independent Python venv + database) -> vpn-ui API or VPN Panel API
+xl2tpd/pptpd -> از /etc/ppp/chap-secrets که توسط پنل به‌روزرسانی می‌شود استفاده می‌کنند
+strongSwan -> PSK مشترک برای فاز IPsec کاربران L2TP
+OpenVPN -> احراز هویت user/pass از طریق اسکریپت‌های hook که به API داخلی وصل می‌شوند
+اسکریپت داخلی (scheduler) -> هر چند ثانیه مصرف زنده/انقضا/حجم را بررسی و کاربران متخلف را قطع می‌کند
 ```
 
-The installer downloads the latest stable GitHub Release (pinned by its `vX.Y.Z` tag), installs system prerequisites including `jq` and `rsync`, installs Ubuntu's default `python3`, `python3-venv`, and `python3-pip` packages, and verifies Python is `>=3.12,<3.15` before creating the virtual environment. This selects Python 3.12 on Ubuntu 24.04 and the distribution default (3.14) on Ubuntu 26.04/Resolute. It then creates the `vpnmanager` system user, installs the project, and runs Alembic migrations. The installer displays the bot-token prompt and numeric owner-ID prompt directly on the terminal; the token is visible while typing or pasting, then verified with Telegram `getMe`. The token is not written to shell history or process arguments; it is passed to the setup module only through a private stdin pipe. Ctrl+C interrupts the installation. Finally, `.env` is written with mode `0600`, `vpn-manager-bot` is enabled, and the `vpn-help` maintenance command is installed. The `vpn-help` SSH menu is English-only and also accepts bot tokens as visible input. Super Admin ID and bot-token changes are independent, so either can be configured first. Because this release uses long polling, startup checks for and removes any old Telegram webhook without discarding pending updates.
+## اتصال کاربران
+- **L2TP/IPsec**: سرور = IP سرور، PSK = مقدار چاپ‌شده در پایان نصب، یوزر/پس از پنل
+- **PPTP**: سرور = IP سرور، یوزر/پس از پنل (توجه: PPTP امنیت پایینی دارد و برخی ISPها/سیستم‌عامل‌ها آن را مسدود می‌کنند)
+- **OpenVPN**: از پنل > «کاربران»، دکمه‌ی دانلود کانفیگ کنار همان کاربر را بزنید تا فایل `.ovpn` اختصاصی او (شامل سرتیفیکیت شخصی‌اش) دانلود شود؛ اتصال فقط با همین سرتیفیکیت انجام می‌شود، نیازی به یوزر/پس نیست (هر کاربر باید فایل اختصاصی خودش را بگیرد، نه یک فایل نمونه‌ی مشترک)
+- **IKEv2**: سرور = IP یا دامنه‌ی مستقیم سرور، احراز هویت EAP-MSCHAPv2 با یوزر/پس پنل؛ UDP/500 و UDP/4500 باید در فایروال بیرونی ارائه‌دهنده هم باز باشند.
+- **OpenConnect / Cisco AnyConnect**: سرور = IP یا دامنه‌ی مستقیم و پورت تنظیم‌شده در کارت OpenConnect (پیش‌فرض 8443 و قابل انتقال به 443)، یوزر/پس از پنل.
+- **SSTP** (خودکار روی install/update نصب می‌شود، پایین توضیح داده شده): سرور = IP سرور یا دامنه‌ی اختصاصی، پورت = مقدار تنظیم‌شده در «مرکز پروتکل‌ها» (پیش‌فرض 4433)، یوزر/پس از پنل. بهترین گزینه برای ویندوز (VPN داخلی، نوع SSTP). موقع ساخت/ویرایش کاربر می‌توانید «نحوه‌ی احراز هویت SSTP» را انتخاب کنید: «فقط یوزر/پس» (پیش‌فرض) یا «سرتیفیکیت + یوزر/پس» - در حالت دوم، دکمه‌ی «دانلود سرتیفیکیت SSTP» هم در صفحه‌ی ساب کاربر نمایش داده می‌شود؛ این سرتیفیکیت همان گواهی TLS سرور SSTP است (`install/setup_sstp.sh` می‌سازد) و وقتی self-signed باشد، کاربر باید آن را دانلود و در فهرست گواهی‌های مورد اعتماد سیستم‌عاملش نصب کند تا خطای گواهی نامعتبر نگیرد؛ اگر سرور از دامنه‌ی معتبر (Let's Encrypt) استفاده می‌کند، معمولاً نیازی به این کار نیست
 
+## درباره ویندوز سرور
+پنل و بک‌اند این پروژه (FastAPI + سرویس‌های لینوکسی xl2tpd/strongSwan/pptpd) روی
+**Windows Server به‌صورت مستقیم اجرا نمی‌شود**. ویندوز سرور به‌صورت بومی از طریق
+نقش RRAS می‌تواند L2TP/IPsec و PPTP سرور راه‌اندازی کند، اما آن یک سیستم کاملاً
+جدا از این پنل است و این پنل نمی‌تواند آن را مدیریت کند. اگر ملزم به ویندوز هستید،
+ساده‌ترین راه استفاده از یک ماشین مجازی لینوکسی (Hyper-V / VMware) در همان سرور و
+نصب این پنل داخل آن است.
+
+## تنظیم دامنه اختصاصی و SSL
+**نکته مهم: SSL خودکار فعال نمی‌شود — باید خودت یک‌بار از داخل پنل درخواست بدی.** دلیلش اینه
+که SSL نیاز به یک دامنه واقعی داره که از قبل بدونیم؛ چون هنگام نصب دامنه‌ای مشخص نیست، اسکریپت
+نصب پنل رو فقط روی IP (بدون SSL) بالا می‌آره.
+
+1. یک ساب‌دامنه (مثلاً `panel.yourdomain.com`) بساز و رکورد **A** آن را به آی‌پی سرور اشاره بده.
+2. چند دقیقه صبر کن تا DNS منتشر شود (با `ping panel.yourdomain.com` بررسی کن).
+3. وارد پنل شو (با آدرس IP فعلی)، از منو «تنظیمات» را انتخاب کن، در بخش «دامنه و SSL» ساب‌دامنه
+   و یک ایمیل وارد کن و «فعال‌سازی» را بزن.
+4. پنل به‌صورت خودکار با `certbot` گواهی رایگان می‌گیرد و Nginx را طوری بازپیکربندی می‌کند که
+   از این پس پنل روی `https://panel.yourdomain.com` بالا بیاید. بعداً می‌توان listener HTTPS را بدون صدور دوباره‌ی گواهی به پورتی مثل 9443 منتقل کرد؛ در آن حالت آدرس ورود باید پورت را هم داشته باشد و 443 می‌تواند به OpenConnect داده شود.
+
+اگر رکورد DNS هنوز درست تنظیم نشده باشد، این عملیات با پیام خطا مواجه می‌شود و می‌توانید
+دوباره تلاش کنید؛ پیکربندی قبلی (روی IP) دست‌نخورده باقی می‌ماند تا زمانی که SSL موفق شود.
+
+## دامنه‌ی جدا برای پروتکل‌ها (L2TP/PPTP/OpenVPN)
+**این دامنه کاملاً جدا از دامنه‌ی پنل (بالا) است و نباید یکی باشند.** دلیلش این است که
+دامنه‌ی پنل معمولاً برای مرور تحت وب استفاده می‌شود و خیلی از کاربران آن را پشت یک
+CDN/پروکسی مثل Cloudflare (حالت «Proxied» / ابر نارنجی) می‌گذارند. آن حالت فقط ترافیک
+HTTP(S) را جلو می‌برد؛ اگر آدرس همان دامنه را برای اتصال L2TP/PPTP/OpenVPN هم به کاربران
+بدهید، اتصال همیشه با تایم‌اوت/connection refused مواجه می‌شود چون آن ترافیک اصلاً به
+سرور واقعی نمی‌رسد.
+
+1. یک ساب‌دامنه‌ی دیگر بساز (مثلاً `vpn.yourdomain.com`، **نه** همان ساب‌دامنه‌ی پنل) و
+   رکورد **A** آن را مستقیم (بدون پروکسی/DNS-only) به آی‌پی سرور اشاره بده.
+2. از داخل پنل، منوی «تنظیمات» > «دامنه‌ی اختصاصی پروتکل‌ها» را باز کن، ساب‌دامنه را وارد
+   کن و «تایید و ذخیره» را بزن. این مرحله فقط DNS را بررسی می‌کند (نیازی به SSL/گواهی
+   نیست، چون این پروتکل‌ها HTTP نیستند).
+3. بعد از تایید، فایل نمونه‌ی OpenVPN و آدرس نمایش داده‌شده برای L2TP/PPTP در همین صفحه به‌روزرسانی می‌شوند.
+4. هر وقت خواستی، می‌توانی «حذف دامنه و بازگشت به IP» را بزنی تا کلاینت‌ها دوباره مستقیم
+   از IP سرور استفاده کنند.
+
+## دانلود کانفیگ OpenVPN هر کاربر
+در صفحه‌ی «مدیریت کاربران»، کنار هر کاربری که OpenVPN برایش فعال باشد، دکمه‌ی
+«دانلود کانفیگ OpenVPN» وجود دارد که یک فایل `.ovpn` مخصوص همان کاربر (با آدرس/پورت/
+پروتکل فعلی) می‌سازد. این فایل شامل پسورد نیست؛ کاربر هنگام اتصال یوزرنیم/پسورد پنل
+خودش را وارد می‌کند.
+
+## تغییر یوزرنیم/پسورد ادمین و پورت پنل
+
+**از داخل پنل:** منوی «تنظیمات» شامل دو بخش «یوزرنیم و پسورد ادمین» و «پورت پنل» است.
+تغییر یوزرنیم/پسورد نیاز به وارد کردن پسورد فعلی دارد و بعد از ذخیره، باید دوباره لاگین کنی.
+(اگر دامنه و SSL فعال باشد نیز تغییر پورت پشتیبانی می‌شود؛ گواهی موجود دوباره صادر نمی‌شود و فقط listener Nginx جابه‌جا می‌شود. پس از آن باید پورت را در URL بنویسید.)
+
+**از طریق SSH (وقتی دسترسی به پنل رو از دست دادی):**
 ```bash
-sudo systemctl status vpn-manager-bot
-sudo journalctl -u vpn-manager-bot -f
-sudo vpn-help
+# ریست پسورد ادمین (اگر یوزرنیم موجود باشد پسوردش عوض می‌شود، وگرنه ادمین جدید ساخته می‌شود)
+sudo bash /opt/vpn-panel/scripts/reset_admin_password.sh admin YourNewPassword123
+
+# تغییر پورت پنل بدون دامنه
+sudo bash /opt/vpn-panel/scripts/change_panel_port.sh 8080
+
+# تغییر listener پنل دارای دامنه/SSL با استفاده از همان گواهی
+sudo bash /opt/vpn-panel/scripts/change_panel_port.sh 9443 panel.example.com
 ```
 
-Keep `PANEL_CREDENTIAL_ENCRYPTION_KEY` safe and stable. Replacing it without a planned key-rotation migration makes previously encrypted panel credentials and client payloads unreadable. A real Ubuntu/systemd installation has not yet been exercised for this development state.
+## اعلان‌ها و بکاپ تلگرام
 
-## Sales flow
+از صفحه‌ی «بکاپ» می‌توانید پنل را به یک ربات تلگرام برای اعلان‌ها و بکاپ زمان‌بندی‌شده وصل کنید:
 
-An administrator adds a panel, synchronizes its inbounds, creates a plan and configures the manual payment instructions. A customer creates an order, sends a receipt photo with the full order UUID in its caption, and waits for an authorized administrator to approve or reject it. Provisioning runs only after approval. Wallet top-ups follow the same manual-review process. Customers can use **مشخصات من** to copy their numeric Telegram ID, inspect their wallet and browse all orders and active subscriptions. Wallet purchases, renewals and provisioning retries are available, but crash recovery/reconciliation across the database and remote panel still needs further work. Super Admins can promote/demote persistent database Super Admins and assign per-area permission overrides to subordinate admins. A five-minute lifecycle worker sends 24-hour reminders and attempts to disable expired clients; run only one bot instance until distributed scheduler locking is added.
+1. با **@BotFather** یک ربات بساز و توکن آن را بگیر.
+2. یک کانال/گروه برای «لاگ» و (اختیاری، می‌تواند همان کانال باشد) یک کانال/گروه دیگر برای «بکاپ» بساز و
+   ربات را در هر دو **ادمین** کن.
+3. آیدی عددی هر کانال (مثلاً با فوروارد یک پیام از کانال به @userinfobot) یا یوزرنیم آن (با @) را بگیر.
+4. در صفحه‌ی «بکاپ» > «اتصال به تلگرام»: توکن ربات را وارد کن، «کانال لاگ» را با آیدی/یوزرنیمش فعال کن،
+   «کانال بکاپ» را هم با آیدی/یوزرنیمش و تایمِ دلخواه (پیش‌فرض هر ۶ ساعت) فعال کن، و ذخیره بزن.
 
-## API and protocol caveats
+بعد از فعال‌سازی:
+- **کانال لاگ** بلافاصله هر اتفاق داخل پنل را دریافت می‌کند: ورود/خروج ادمین، ساخت/ویرایش/حذف یوزر و
+  ادمین، اتصال/قطع هر کاربر VPN (با پروتکل و آی‌پی)، غیرفعال‌سازی خودکار به‌خاطر انقضا/اتمام حجم،
+  مسدودسازی/رفع مسدودیت آی‌پی، تغییر هر تنظیم (دامنه، پورت، پروتکل‌ها، PSK و ...)، و گرفتن/وارد کردن بکاپ.
+- **کانال بکاپ** طبق تایم تنظیم‌شده، دقیقاً همان فایل «بکاپ کامل» پنل را شامل تنظیمات، نودها، PKI و PSK
+  دریافت می‌کند؛ دکمه‌ی «ارسال بکاپ همین الان» هم برای بکاپ فوری/تست هست. فایل‌های جدید دارای کنترل صحت
+  SHA-256 و گزارش سلامت هستند و فایل ناقص یا ناسازگار با هش/شمارش ثبت‌شده پیش از بازیابی رد می‌شود.
+- «بکاپ بدون تنظیمات» برای انتقال داده‌های اصلی است و جای بکاپ کامل Disaster Recovery را نمی‌گیرد.
+- فایل بکاپ شامل رمزها، کلید خصوصی CA و توکن‌های حساس است؛ کانال بکاپ را کاملاً خصوصی نگه دارید.
 
-The adapter uses the panel session cookie, respects Base Path, sends `X-Requested-With`, and treats `success:false` as an API failure. The client `totalGB` field is treated as bytes and `expiryTime` as Unix milliseconds, according to the reviewed API contract.
+**این Bot Token فقط برای اعلان‌ها و بکاپ است.** کنترل تعاملی قدیمی و long-polling پنل غیرفعال شده‌اند؛
+بن IP، مدیریت کاربران و تنظیمات امنیتی همچنان از خود پنل وب انجام می‌شوند. اعلان‌های ورود ناموفق
+اکنون اطلاع‌رسانی متنی هستند و دکمه‌های callback وابسته به کنترلر قدیمی ارسال نمی‌شوند.
 
-Recognizing a protocol does not guarantee complete automatic provisioning. In particular, `wg-c`, `awg`, `gre`, `mtproto`, and `hysteria` need protocol-specific schema validation against the exact target panel version. No live protocol-by-protocol provisioning test has been completed. Inbound creation currently covers basic fields rather than every stream/network/TLS/Reality option.
+## ربات مستقل فروش و مدیریت VPN — VPN Control Center
 
-The per-client `limitIp` value caps simultaneous source IPs; it is not a guaranteed physical-device counter. For WireGuard-C, AmneziaWG and GRE, config slots are controlled by the inbound-level `userLimit`, not independently by each sales plan.
+ربات مستقل فروش و مدیریت اشتراک، جایگزین کنترلر تلگرامی قدیمی پنل شده است. نصب آن یک سرویس جداگانه‌ی
+`vpn-manager-bot` با Python virtualenv مستقل و پایگاه‌داده‌ی مستقل است؛ از virtualenv بک‌اند پنل استفاده نمی‌کند.
 
-## Validation boundary
+در منوی مدیریت ربات، هنگام افزودن پنل می‌توانید یکی از این دو ارائه‌دهنده را انتخاب کنید:
 
-Automated tests cover persistence/migrations, wallet ledger behavior, TOTP, installer configuration, mocked panel APIs and mocked provisioning. Live Telegram polling, live vpn-ui mutations, all protocol payloads, real payments, Ubuntu/systemd behavior, multi-admin race testing, scheduled subscription expiry/notifications and backup/restore drills remain unverified. The current payment provider is manual review only.
+- **vpn-ui:** ورود مبتنی بر Cookie و پشتیبانی از TOTP؛ مدیریت Inboundها، کاربران، Core و Xray Outboundهای همان API.
+- **VPN Panel:** ورود JWT با الزام نقش `superadmin` و لایسنس داخلی معتبر؛ مدیریت کاربران از `/api/users` و
+  شناسایی سرویس‌ها از `protocol-overview`. هشت پروتکل L2TP، PPTP، OpenVPN، SSTP، IKEv2، OpenConnect، VMess
+  و VLESS به‌صورت سرویس‌های مستقل نمایش داده می‌شوند. عملیات Core، Outbound و ساخت Inbound مخصوص vpn-ui
+  برای این ارائه‌دهنده نمایش داده نمی‌شوند.
+
+ربات مستقل قابلیت‌های فروش نسخه اصلی خود را حفظ می‌کند: کاتالوگ پلن، سفارش، بررسی دستی رسید پرداخت، کیف پول،
+خرید، تمدید، ارسال لینک/فایل اشتراک، مدیریت مشتریان و مدیران و ثبت رویدادهای مدیریتی. برای VPN Panel، مصرف
+`used_bytes` مصرف کل حساب است و API تفکیک Upload/Download یا مصرف مستقل هر پروتکل ارائه نمی‌کند؛ ربات آن را
+به‌اشتباه مصرف تفکیکی نمایش نمی‌دهد. لینک تحویل از `sub_link` معتبر خود پنل گرفته می‌شود.
+
+### نصب و به‌روزرسانی ربات
+
+- در نصب تازه‌ی **Main Panel**، اگر Python سازگار `3.12` تا `3.14` و ترمینال تعاملی موجود باشد، نصب‌کننده
+  اصلی ربات را با virtualenv و systemd جداگانه نصب می‌کند. نصب روی Nodeها انجام نمی‌شود.
+- اگر نسخه‌ی Python سازگار یا TTY موجود نباشد، نصب پنل متوقف نمی‌شود؛ نصب ربات با پیام و دستور دستی گزارش می‌شود.
+- `install/update.sh` در صورت نصب‌بودن سرویس ربات، کد آن را هم به‌روزرسانی می‌کند. `.env`، `var/`، بکاپ‌ها،
+  virtualenv و دیتابیس SQLite ربات حفظ می‌شوند و در صورت خطای آپدیت، کد و systemd unit ربات rollback می‌شوند.
+- راهنمای کامل تنظیم ربات، فروش و APIها در `bot/README.md` و `bot/README_FA.md` قرار دارد.
+- فرمان‌های کامل با `/help` نمایش داده می‌شوند. کنترل ربات با long polling اجرا می‌شود و هنگام فعال‌شدن،
+  webhook قبلی همان Bot Token را حذف می‌کند تا فرمان‌های قدیمی یا تکراری اجرا نشوند.
+
+تا وقتی توکن/چت مربوطه تنظیم و سوییچ آن فعال نشده باشد، پنل هیچ درخواست کنترلی به تلگرام نمی‌زند.
+
+## گسترش بعدی (پیشنهادی، در این نسخه پیاده‌سازی نشده)
+- چند ادمین با سطح دسترسی
+- گزارش کامل لاگ اتصال‌های تاریخی
+- پشتیبانی IPv6
+- چندزبانه (فارسی/انگلیسی)
+
+## عیب‌یابی سریع
+```bash
+systemctl status vpn-panel-api      # وضعیت بک‌اند
+systemctl status xl2tpd pptpd       # وضعیت L2TP/PPTP
+systemctl status openvpn-server@server
+systemctl status strongswan-starter # یا: systemctl status strongswan
+journalctl -u vpn-panel-api -f      # لاگ زنده بک‌اند
+tail -f /var/log/openvpn.log
+```
+
+### اگر «هیچ‌کدام» از پروتکل‌ها اصلاً وصل نمی‌شوند (تایم‌اوت/connection refused)
+نصب/آپدیت پنل، فایروال خودِ سرور (ufw/firewalld/iptables - هرکدام فعال باشد) را برای هر
+پروتکل فعال به‌صورت خودکار باز می‌کند؛ پس اگر همچنان همه‌ی پروتکل‌ها هم‌زمان از کار
+افتاده‌اند، معمولاً دلیلش چیزی خارج از خودِ سرور است. به ترتیب این‌ها را چک کن:
+
+1. **فایروال/Security Group ارائه‌دهنده‌ی سرور** (جدا از iptables خودِ سرور) — بسیاری از
+   ارائه‌دهنده‌های ابری (مثلاً Google Cloud, Oracle Cloud, AWS, Azure) یک فایروال بیرونی
+   جدا دارند که پیش‌فرض بیشتر پورت‌ها را می‌بندد. باید این پورت‌ها را آن‌جا هم صریحاً باز
+   کنی: `UDP 500`، `UDP 4500`، `UDP/TCP 1701`، `TCP 1723`، پروتکل `GRE (47)`،
+   `UDP/TCP 1194` (یا هر پورتی که برای OpenVPN گذاشتی).
+2. **پشتیبانی از GRE** — پروتکل PPTP از GRE استفاده می‌کند و خیلی از ارائه‌دهنده‌های ابری
+   (به‌خصوص آن‌هایی که از NAT برای IPv4 استفاده می‌کنند) اصلاً GRE را عبور نمی‌دهند؛ در این
+   حالت PPTP هیچ‌وقت کار نخواهد کرد صرف‌نظر از تنظیمات پنل، و باید از L2TP یا OpenVPN
+   استفاده کنی.
+3. **دامنه‌ی اشتباه** — اگر آدرسی که به کاربر داده‌ای، دامنه‌ی پنل (که شاید پشت Cloudflare
+   Proxied باشد) بوده، همین مشکل اصلی است؛ به بخش «دامنه‌ی جدا برای پروتکل‌ها» بالا مراجعه کن.
+4. با دستورهای بالا مطمئن شو سرویس‌ها واقعاً `active (running)` هستند، نه crash کرده.
+5. از یک دستگاه دیگر (نه خودِ سرور) تست کن که پورت واقعاً از بیرون باز است، مثلاً:
+   `nc -zvu SERVER_IP 500` یا `nc -zv SERVER_IP 1723`.
+
+## 2.3.13 runtime health
+
+Protocol cards use runtime health rather than systemd state alone. Xray files
+are repaired to `root:vpn-xray` automatically, L2TP SysV units are checked by
+process/listener, and strongSwan is checked through charon plus UDP 500/4500.
+
+## 2.3.14 settings workspaces and L2TP health repair
+
+Settings now uses persistent, keyboard-accessible tabs for General, Panel & Domain,
+VPN & Certificates, Subscription, and Client Apps. Backup & Update uses separate
+Backup, Update, and Telegram tabs. The selected section is retained in the URL and
+browser storage, and switching sections uses a reduced-motion-aware transition.
+
+The L2TP repair path now restores the `name l2tpd` marker in existing
+`/etc/ppp/options.xl2tpd` files. Runtime health no longer reports normal SIGTERM
+shutdown messages as fatal errors, and a present daemon with an incomplete config is
+reported as a configuration problem rather than as not installed.
+
+## 2.3.15 branding, instant dashboard and automatic port fallback
+
+Settings now includes a Branding & Login workspace for uploaded panel logos, login hero images and optional text. Install/Repair can move configurable listeners away from ports owned by unrelated processes and records the exact replacement on the protocol card. Dashboard renders the last successful non-sensitive snapshot immediately while refreshing in the background.
+
+## 2.3.16 runtime/subscription/permission update
+
+Version 2.3.16 keeps Xray runtime state, database enable flags, and generated subscriptions synchronized; adds granular protocol-aware admin enforcement; fixes the fixed desktop sidebar and soft text rendering; and orders Backup tabs as Backup, Telegram, then Update. See `RELEASE_NOTES_2.3.16.md`.
+
+## 2.3.19 — دامنه اختصاصی سابسکریپشن Xray
+در تنظیمات ساب می‌توان یک hostname مستقل برای لینک خام VMess/VLESS و QR endpointها تعریف کرد. این hostname با SSL مستقل راه‌اندازی می‌شود و صفحه ورود ادمین را منتشر نمی‌کند.
+
+## 2.3.20 — همگام‌سازی Xray، QR مستقل و متن زیر ورود
+
+- Start مربوط به VMess/VLESS پیش از اجرای Xray مقدار enabled را ذخیره می‌کند و در صورت شکست rollback می‌شود.
+- کارت‌ها و فرم Edit بعد از Start/Stop/Restart با هم تازه‌سازی می‌شوند.
+- QRهای صفحه ساب به‌صورت SVG داخلی Data URL تحویل داده می‌شوند و به دامنه یا پورت جداگانه وابسته نیستند.
+- لینک ساب در نصب‌هایی با panel_port قدیمی، پورت واقعی panel.env یا Nginx را تشخیص می‌دهد.
+- متن ثابت قدیمی زیر فرم Login حذف شده و کنترل واضح آن در Settings > General و Branding موجود است.
+
+
+## 2.3.22
+Xray live-session/traffic reconciliation, client connection hosts, subscription usage metadata and subscription QR.
+
+## 2.3.23 — full protocol provisioning and smart license reserve
+
+The Protocol Center now restores the IPsec card and provides a one-click terminal installer for every supported protocol with real 0–100 progress and final runtime health verification. Kernel module detection correctly handles built-in/loadable TUN and PPP helpers. Login and License Lock use a visible panel-colored sea wave. Dashboard data refreshes in the background, license status is reduced to Active/Inactive, and pasted license keys are activated immediately only when the current license has one minute or less remaining; otherwise they are reserved and automatically promoted after expiry, reset, deletion, or transfer.
+
+## 2.3.24 — Xray online detection and premium subscription page
+
+- VMess/VLESS online state now combines Xray API, live sockets, access logs, and recent traffic instead of relying on a single counter.
+- Raw subscription links use the working page origin and contain only valid VMess/VLESS profiles.
+- Subscription page and recommended-client cards received a complete responsive redesign with live link health and connection status.
+
+See `RELEASE_NOTES_2.3.24.md` for details.
+
+## 2.3.145 — ربات تلگرام کاملاً دکمه‌ای
+
+ربات کنترل پنل اکنون برای همه عملیات روزمره منوی شیشه‌ای دارد. فهرست کاربران، مدیریت IP، ادمین‌ها، نودها، بکاپ، ویرایش رمز/حجم/دستگاه/اعتبار و انتخاب سرور از طریق دکمه انجام می‌شود. انتخاب پروتکل‌ها و نودها به‌صورت چندانتخابی با علامت `✅` است و تغییرات فقط بعد از زدن دکمه تأیید ذخیره می‌شوند. برای جزئیات به `RELEASE_NOTES_2.3.145.md` مراجعه کنید.
+
+
+## 2.3.146 — ارسال خودکار لینک اشتراک و QR در ربات تلگرام
+
+بعد از تأیید ساخت کاربر در ربات، پیام موفقیت نمایش داده می‌شود، لینک اشتراک به‌صورت قابل کلیک ارسال می‌گردد و همان URL داخل یک تصویر PNG QR قرار می‌گیرد. اسکن QR، آدرس اشتراک را مستقیماً در مرورگر دستگاه باز می‌کند. در کارت مدیریت هر کاربر نیز دکمه «ارسال لینک و QR» برای ارسال مجدد اضافه شده است.
+
+## 2.3.148 — اصلاح نمایش چشم رمز و کش رابط کاربری
+
+- دکمه‌ی نمایش/مخفی‌کردن رمز کاملاً داخل کادر قرار گرفت و آیکن بومی Edge غیرفعال شد تا دو چشم یا آیکن بیرون کادر دیده نشود.
+- بخش «ربات کنترل کامل پنل» بلافاصله زیر توکن ربات و با کادر مشخص نمایش داده می‌شود.
+- `index.html` دیگر کش نمی‌شود و فایل‌های نسخه‌دار رابط کاربری با نام جدید بارگذاری می‌شوند؛ بنابراین نسخه‌ی بک‌اند جدید همراه رابط کاربری قدیمی نمایش داده نمی‌شود.
+- آپدیتر سیاست کش Nginx را با اعتبارسنجی و امکان بازگردانی امن اعمال می‌کند.
+
+## 2.3.147 — سازگاری آپدیت با Python 3.10 و 3.11
+
+خطای SyntaxError در `telegram_controller.py` که روی نسخه‌های رایج پایتون اوبونتو هنگام آپدیت رخ می‌داد برطرف شد. قابلیت ارسال لینک اشتراک و QR نسخه 2.3.146 بدون تغییر باقی مانده است.
+
+## 2.3.149 — بخش مستقل ربات تلگرام
+
+تنظیمات ربات کنترل کامل پنل اکنون در یک گزینه جدا و واضح با نام «ربات تلگرام» در منوی اصلی قرار دارد. توکن، چت کنترل، مدیران مجاز، فعال‌سازی و تست ربات در همان صفحه انجام می‌شود و تب بکاپ فقط لینک مستقیم آن را نمایش می‌دهد.
+
+
+## 2.3.150 — رفع صفحه سیاه و حذف میانبر اضافی بکاپ
+
+میانبر تکراری ربات تلگرام از صفحه بکاپ حذف شد. تمام فایل‌های رابط کاربری اکنون در هر نسخه نام نسخه‌دار و هش محتوایی یکتا دارند تا فایل‌های immutable نسخه قبلی باعث خطای بارگذاری نشوند. همچنین در صورت شکست بارگذاری یک chunk، به‌جای صفحه سیاه پیام بازیابی و دکمه پاک‌کردن کش نمایش داده می‌شود.

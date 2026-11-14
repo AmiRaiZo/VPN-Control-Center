@@ -1,0 +1,183 @@
+/* VPN Panel 2.3.185 — cache-busted desktop login visual sync */
+.login-page {
+  background:
+    radial-gradient(900px 560px at 84% 9%, rgb(var(--color-signal) / .135), transparent 61%),
+    radial-gradient(760px 520px at 6% 80%, rgb(var(--color-info) / .065), transparent 67%),
+    linear-gradient(155deg, rgb(var(--color-bg)), rgb(var(--color-surface2) / .44)) !important;
+}
+
+@media (min-width: 1024px) {
+  .login-page .login-hero {
+    position: relative !important;
+    isolation: isolate !important;
+    justify-content: center !important;
+    gap: clamp(1.15rem, 2.5vh, 2rem) !important;
+    padding-top: clamp(2.5rem, 5vh, 4rem) !important;
+    padding-bottom: clamp(5.5rem, 12vh, 8rem) !important;
+    background:
+      radial-gradient(circle at 83% 25%, rgb(var(--color-signal) / .145), transparent 30%),
+      radial-gradient(circle at 13% 73%, rgb(var(--color-info) / .075), transparent 32%),
+      linear-gradient(158deg, rgb(var(--color-bg) / .94), rgb(var(--color-surface2) / .63) 55%, rgb(var(--color-bg) / .93)) !important;
+  }
+
+  .login-page .login-hero::before {
+    content: '' !important;
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 0 !important;
+    pointer-events: none !important;
+    background-image:
+      linear-gradient(rgb(var(--color-signal) / .085) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--color-signal) / .085) 1px, transparent 1px),
+      linear-gradient(125deg, transparent 0 45%, rgb(var(--color-signal) / .08) 45% 45.2%, transparent 45.2% 100%) !important;
+    background-size: 128px 128px, 128px 128px, 100% 100% !important;
+    opacity: .25 !important;
+    -webkit-mask-image: radial-gradient(circle at 57% 48%, #000 0 56%, transparent 92%) !important;
+    mask-image: radial-gradient(circle at 57% 48%, #000 0 56%, transparent 92%) !important;
+  }
+
+  .login-page .login-hero::after {
+    content: '' !important;
+    position: absolute !important;
+    inset: 8% 6% !important;
+    z-index: 0 !important;
+    pointer-events: none !important;
+    border-radius: 2.5rem !important;
+    background:
+      radial-gradient(circle at 24% 18%, rgb(var(--color-signal) / .10), transparent 25%),
+      radial-gradient(circle at 82% 72%, rgb(var(--color-info) / .065), transparent 27%) !important;
+    filter: blur(16px) !important;
+  }
+
+  .login-page .login-hero > .relative.z-10.flex.items-center.gap-3 {
+    width: max-content !important;
+    max-width: min(100%, 38rem) !important;
+    margin-inline: auto !important;
+    padding: .72rem 1rem !important;
+    border: 1px solid rgb(var(--color-border) / .86) !important;
+    border-radius: 1.05rem !important;
+    background: linear-gradient(145deg, rgb(var(--color-surface) / .88), rgb(var(--color-surface2) / .68)) !important;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .055), 0 16px 42px rgb(0 0 0 / .22) !important;
+    backdrop-filter: blur(16px) saturate(132%) !important;
+  }
+
+  .login-page .login-hero > .relative.z-10.max-w-xl {
+    width: min(100%, 38rem) !important;
+    max-width: 38rem !important;
+    margin-inline: auto !important;
+    padding: clamp(1.3rem, 2.2vw, 1.9rem) !important;
+    border: 1px solid rgb(var(--color-border) / .84) !important;
+    border-radius: 1.7rem !important;
+    background:
+      radial-gradient(circle at 83% 12%, rgb(var(--color-signal) / .09), transparent 31%),
+      linear-gradient(155deg, rgb(var(--color-surface) / .86), rgb(var(--color-surface2) / .66)) !important;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / .055),
+      0 28px 80px rgb(0 0 0 / .27),
+      0 0 0 1px rgb(var(--color-signal) / .025) !important;
+    backdrop-filter: blur(20px) saturate(138%) !important;
+  }
+
+  .login-page .login-hero-showcase {
+    width: min(230px, 31vh) !important;
+    margin: 0 auto 1.15rem !important;
+  }
+
+  .login-page .login-hero-showcase__core {
+    width: 6.6rem !important;
+    height: 6.6rem !important;
+    border-radius: 1.75rem !important;
+    background: linear-gradient(145deg, rgb(var(--color-surface) / .92), rgb(var(--color-surface2) / .72)) !important;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 18px 58px rgb(0 0 0 / .30), 0 0 40px rgb(var(--color-signal) / .13) !important;
+  }
+
+  .login-page .login-hero-showcase__caption {
+    background: rgb(var(--color-surface) / .82) !important;
+    border-color: rgb(var(--color-border) / .88) !important;
+    color: rgb(var(--color-ink) / .88) !important;
+  }
+
+  .login-page .login-hero-badges {
+    justify-content: center !important;
+    margin-bottom: 1rem !important;
+  }
+
+  .login-page .login-hero-title {
+    max-width: 33rem !important;
+    margin-inline: auto !important;
+    text-align: center !important;
+    font-size: clamp(2.15rem, 3vw, 3.25rem) !important;
+    line-height: 1.18 !important;
+    text-wrap: balance !important;
+    text-shadow: 0 12px 36px rgb(0 0 0 / .28) !important;
+  }
+
+  .login-page .login-hero-subtitle {
+    max-width: 31rem !important;
+    margin-inline: auto !important;
+    text-align: center !important;
+    color: rgb(var(--color-muted) / .98) !important;
+  }
+
+  .login-page .login-hero-footer {
+    display: inline-flex !important;
+    align-items: center !important;
+    width: max-content !important;
+    max-width: 100% !important;
+    min-height: 2rem !important;
+    margin-inline: auto !important;
+    padding: .36rem .82rem !important;
+    border: 1px solid rgb(var(--color-border) / .72) !important;
+    border-radius: 999px !important;
+    background: rgb(var(--color-surface) / .62) !important;
+    color: rgb(var(--color-muted) / .94) !important;
+    backdrop-filter: blur(12px) !important;
+  }
+}
+
+/* Keep all lower wave layers on one common baseline; only the SVG paths morph. */
+.auth-wave-background.auth-wave-background--ocean {
+  inset-inline: 0 !important;
+  bottom: 0 !important;
+  z-index: 4 !important;
+  width: 100% !important;
+  height: clamp(150px, 22vh, 205px) !important;
+  overflow: hidden !important;
+  opacity: 1 !important;
+  filter: drop-shadow(0 -11px 34px rgb(var(--color-signal) / .13)) !important;
+}
+.auth-wave-background.auth-wave-background--ocean svg {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  transform: scaleY(.72) !important;
+  transform-origin: center bottom !important;
+  animation: none !important;
+}
+.auth-wave-background.auth-wave-background--ocean .auth-wave,
+.auth-wave-background.auth-wave-background--ocean .auth-wave-crest {
+  transform: none !important;
+  animation: none !important;
+}
+.auth-wave-background.auth-wave-background--ocean .auth-wave-back { fill: rgb(var(--color-signal) / .085) !important; }
+.auth-wave-background.auth-wave-background--ocean .auth-wave-middle { fill: rgb(var(--color-surface2) / .87) !important; }
+.auth-wave-background.auth-wave-background--ocean .auth-wave-front { fill: rgb(var(--color-surface) / .995) !important; }
+.auth-wave-background.auth-wave-background--ocean .auth-wave-crest-back {
+  stroke: rgb(var(--color-signal) / .38) !important;
+  stroke-width: 2.4 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+.auth-wave-background.auth-wave-background--ocean .auth-wave-crest-front {
+  stroke: rgb(var(--color-signal) / .93) !important;
+  stroke-width: 3.4 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+@media (max-width: 1023px) {
+  .auth-wave-background.auth-wave-background--ocean {
+    height: clamp(115px, 17vh, 160px) !important;
+  }
+}

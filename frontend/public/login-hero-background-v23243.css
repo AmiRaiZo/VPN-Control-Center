@@ -1,0 +1,46 @@
+/* VPN Panel 2.3.234 — change only the desktop hero background.
+   The form side, login cards, typography, spacing, controls and lower waves use
+   their original component/theme styles without any override here. */
+@media (min-width: 1024px) {
+  .login-page .login-hero {
+    background-color: rgb(var(--color-bg)) !important;
+    background-image:
+      radial-gradient(820px 520px at 82% 14%, rgb(var(--color-signal) / .14), transparent 62%),
+      radial-gradient(620px 480px at 8% 84%, rgb(var(--color-info) / .075), transparent 68%),
+      var(--vp-panel-circuit-art),
+      linear-gradient(155deg, rgb(var(--color-bg)), rgb(var(--color-surface2) / .44)) !important;
+    background-size: 100% 100%, 100% 100%, cover, 100% 100% !important;
+    background-position: center, center, center, center !important;
+    background-repeat: no-repeat !important;
+  }
+
+  .light .login-page .login-hero {
+    background-color: rgb(var(--color-surface)) !important;
+    background-image:
+      radial-gradient(820px 520px at 82% 14%, rgb(var(--color-signal) / .085), transparent 62%),
+      radial-gradient(620px 480px at 8% 84%, rgb(var(--color-info) / .05), transparent 68%),
+      var(--vp-panel-circuit-art),
+      linear-gradient(155deg, rgb(var(--color-bg)), rgb(var(--color-surface))) !important;
+  }
+}
+
+
+/* v2.3.234 — balanced desktop hero composition. */
+@media (min-width: 1024px) {
+  .login-page .login-hero {
+    padding-block: clamp(2rem, 4.5vh, 4.5rem) clamp(7.5rem, 15vh, 10rem) !important;
+    background-position: center, center, center, center !important;
+  }
+  .login-page .login-hero > .relative.z-10.max-w-xl {
+    width: min(100%, 42rem);
+    margin-inline: auto;
+  }
+  .login-page .login-hero-title {
+    text-wrap: balance;
+    letter-spacing: -.025em;
+  }
+  .login-page .login-hero-subtitle {
+    max-width: 38rem !important;
+    text-wrap: pretty;
+  }
+}

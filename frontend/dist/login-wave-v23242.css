@@ -1,0 +1,52 @@
+/* VPN Panel 2.3.234 — one continuous lower wave from viewport edge to viewport edge. */
+@media (min-width: 1024px) {
+  .login-page { isolation: isolate; }
+  .login-page > .auth-wave-background.auth-wave-background--ocean {
+    position: fixed !important;
+    left: -1px !important;
+    right: -1px !important;
+    inset-inline: -1px !important;
+    bottom: -1px !important;
+    width: calc(100vw + 2px) !important;
+    max-width: none !important;
+    height: clamp(105px, 14vh, 155px) !important;
+    z-index: 11 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    opacity: 1 !important;
+    filter: drop-shadow(0 -10px 26px rgb(var(--color-signal) / .08)) !important;
+    transform: translateZ(0);
+  }
+  .login-page > .auth-wave-background.auth-wave-background--ocean svg {
+    display: block !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    transform: translateZ(0) !important;
+    overflow: visible !important;
+  }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave,
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-crest {
+    transform-origin: center bottom !important;
+    vector-effect: non-scaling-stroke;
+  }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-back { fill: rgb(var(--color-signal) / .075) !important; }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-middle { fill: rgb(var(--color-surface2) / .76) !important; }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-front { fill: rgb(var(--color-surface) / .992) !important; }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-crest {
+    fill: none !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+  }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-crest-back {
+    stroke: rgb(var(--color-signal) / .28) !important;
+    stroke-width: 1.35 !important;
+  }
+  .login-page > .auth-wave-background.auth-wave-background--ocean .auth-wave-crest-front {
+    stroke: rgb(var(--color-signal) / .96) !important;
+    stroke-width: 2.75 !important;
+    filter: drop-shadow(0 0 8px rgb(var(--color-signal) / .22)) !important;
+  }
+  .login-page > section { z-index: 10 !important; }
+}
